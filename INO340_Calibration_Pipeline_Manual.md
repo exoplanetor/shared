@@ -2,10 +2,6 @@
 
 **Bias/dark/flat calibration, hot-pixel masking, 2D background handling for INO340 telescope data.**
 
-Developed for the [Iranian National Observatory (INO340)](https://ino.org.ir/en/for-astronomers/).
-
-**Developed by:** [Leila Sadeghi Ardestani](https://github.com/exoplanetor), with valuable help from different INO Team members
-
 **Repository:** https://github.com/exoplanetor/shared
 
 **Contact:** lsadeghi@ipm.ir
@@ -59,7 +55,7 @@ Place all raw FITS files (`.fit`/`.fits`) in one folder.
 
 ## Glossary
 
-**Bias** — zero-exposure readout baseline. 
+**Bias** — zero-exposure readout baseline. \n
 **Dark** — closed-shutter exposure capturing thermal signal. 
 **Flat** — uniform-illumination exposure capturing pixel sensitivity variation. 
 **Master frame** — combined reference built from many bias/dark/flat frames. 
@@ -111,3 +107,8 @@ Calibration choices are logged into master-frame headers (`combined`, `bias_subt
 ## Next Steps
 
 A fully functional **Aperture Photometry** code is also available for use on your calibrated output. Contact lsadeghi@ipm.ir for more information.
+
+---
+Developed for the [Iranian National Observatory (INO340)](https://ino.org.ir/en/for-astronomers/).
+
+**Developed by:** [Leila Sadeghi Ardestani](https://github.com/exoplanetor), with valuable help from different INO Team members
