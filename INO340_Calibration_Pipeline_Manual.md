@@ -1,11 +1,13 @@
 # INO340 Image Calibration Pipeline
 
-**Bias/dark/flat calibration and hot-pixel masking for INO340 telescope data.**
+**Bias/dark/flat calibration, hot-pixel masking, 2D background handling for INO340 telescope data.**
 
 Developed for the [Iranian National Observatory (INO340)](https://ino.org.ir/en/for-astronomers/).
 
 **Developed by:** [Leila Sadeghi Ardestani](https://github.com/exoplanetor), with valuable help from different INO Team members
+
 **Repository:** https://github.com/exoplanetor/shared
+
 **Contact:** lsadeghi@ipm.ir
 
 ---
