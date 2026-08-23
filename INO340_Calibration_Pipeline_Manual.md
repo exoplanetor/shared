@@ -55,11 +55,16 @@ Place all raw FITS files (`.fit`/`.fits`) in one folder.
 
 ## Glossary
 
-**Bias** — zero-exposure readout baseline. \n
+**Bias** — zero-exposure readout baseline. 
+
 **Dark** — closed-shutter exposure capturing thermal signal. 
+
 **Flat** — uniform-illumination exposure capturing pixel sensitivity variation. 
+
 **Master frame** — combined reference built from many bias/dark/flat frames. 
+
 **ADU** — raw detector output unit. 
+
 **Hot pixel** — pixel with abnormally high, non-representative dark current.
 
 ## Running the Pipeline
