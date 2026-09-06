@@ -614,3 +614,4 @@ def solve_with_astrometry_net(
             return None
 
         return WCS(wcs_header)
+
