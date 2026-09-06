@@ -213,7 +213,7 @@ def find_stars(image_path, image_index=0,
 # ----------------------------
 def estimate_fwhm_ensemble(stars, image_data, n_samples=10, cutout_size=40):
     if stars is None or len(stars) == 0:
-        return None
+        return None, 0
     fitter = fitting.LevMarLSQFitter()
     fwhm_vals = []
     flux = stars["flux"] if "flux" in stars.colnames else np.ones(len(stars))
@@ -480,3 +480,40 @@ def save_photometry_table(photometry_table, output_dir, original_filename,
     except Exception as e:
         print(f"[WARNING] Failed to save photometry table for {original_filename}: {e}")
         return None
+
+
+# ----------------------------
+# FILTER IDENTIFICATION
+# ----------------------------
+PS1_SUPPORTED_FILTERS = {"g", "r", "i", "z", "y"}
+
+
+def get_filter_from_header(header, filename="<unknown file>"):
+    """
+    Read the FILTER keyword from a FITS header, added by the calibration
+    pipeline upstream of this photometry pipeline.
+
+    Raises a RuntimeError (halting the pipeline) if the keyword is missing
+    or empty - filter identity must be known before zero-point calibration
+    can be trusted, so this is not something to silently guess or default.
+
+    Returns the filter name as a clean, lowercase string (e.g. 'r'),
+    with surrounding whitespace stripped (FITS string values are often
+    padded, e.g. "'r       '").
+    """
+    if "FILTER" not in header:
+        raise RuntimeError(
+            f"'{filename}' has no FILTER keyword in its header. "
+            "This pipeline requires the calibration step to record the "
+            "filter used. Please add a FILTER keyword to this file's "
+            "header before running photometry on it."
+        )
+
+    filt = str(header["FILTER"]).strip().lower()
+    if not filt:
+        raise RuntimeError(
+            f"'{filename}' has an empty FILTER keyword. "
+            "Please set a valid filter name in this file's header."
+        )
+
+    return filt
