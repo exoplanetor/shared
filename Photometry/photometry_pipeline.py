@@ -9,7 +9,9 @@ from steps_photometry import (
     find_stars,
     estimate_fwhm_ensemble,
     build_photometry_table,
-    save_photometry_table
+    save_photometry_table,
+    get_filter_from_header,
+    PS1_SUPPORTED_FILTERS
 )
 from steps_astrometry import (
     select_astrometric_candidates,
@@ -261,6 +263,50 @@ def main():
                                 title=reference_filename
                             )
                             dict_aper[reference_filename]["manual_wcs"] = manual_wcs
+
+                            # -----------------------------------------------
+                            # TIER 3 FOLLOW-UP: use the just-fitted manual WCS
+                            # as a position hint to auto-retry astrometry.net
+                            # on every OTHER image in the batch, so the whole
+                            # batch isn't reduced to a single calibrated frame.
+                            # -----------------------------------------------
+                            if manual_wcs is not None:
+                                h, w = ref_data.shape
+                                center_sky = manual_wcs.pixel_to_world(w / 2, h / 2)
+                                ra_hint = center_sky.ra.deg
+                                dec_hint = center_sky.dec.deg
+                                search_radius_arcmin = SCALE_UPPER_ARCMIN * 4
+
+                                print(f"\nUsing manual WCS as a position hint "
+                                      f"(RA={ra_hint:.5f}, Dec={dec_hint:.5f}, "
+                                      f"radius={search_radius_arcmin:.1f} arcmin) "
+                                      "to auto-solve the remaining images...\n")
+
+                                for fname in dict_images.keys():
+                                    if fname == reference_filename:
+                                        continue  # already solved manually
+                                    found_stars = dict_aper[fname].get("sources found")
+                                    image_data = dict_images[fname]["data"]
+                                    if found_stars is None:
+                                        continue
+                                    wcs_solution = solve_with_astrometry_net(
+                                        sources=found_stars,
+                                        image_shape=image_data.shape,
+                                        api_key=ASTROMETRY_API_KEY,
+                                        scale_lower_arcmin=SCALE_LOWER_ARCMIN,
+                                        scale_upper_arcmin=SCALE_UPPER_ARCMIN,
+                                        ra=ra_hint,
+                                        dec=dec_hint,
+                                        search_radius_arcmin=search_radius_arcmin
+                                    )
+                                    dict_aper[fname]["manual_wcs"] = wcs_solution
+                                    if wcs_solution is not None:
+                                        print(f"{fname}: astrometry.net WCS solved successfully "
+                                              "(using manual reference as hint).")
+                                    else:
+                                        print(f"{fname}: astrometry.net WCS solve failed "
+                                              "(using manual reference as hint). "
+                                              "This image will not have RA/Dec or zero-point calibration.")
                         else:
                             print(f"{reference_filename}: no candidates left after review — skipping manual WCS.")
                     else:
@@ -289,6 +335,8 @@ def main():
     # -----------------------------
     # ZERO-POINT CALIBRATION
     # (Pan-STARRS DR2, per image with a valid WCS + photometry table)
+    # Filter is read from each image's own FITS header (FILTER keyword),
+    # since different images in the same batch may use different filters.
     # -----------------------------
     print("\n" + "=" * 80)
     print("Zero-point calibration (Pan-STARRS DR2)")
@@ -299,23 +347,34 @@ def main():
             print(f"{fname}: no RA/Dec available — skipping zero-point.")
             continue
 
+        # Missing FILTER keyword is a hard stop - filter identity must be
+        # known before zero-point calibration can be trusted.
+        filt = get_filter_from_header(dict_images[fname]["header"], filename=fname)
+
+        if filt not in PS1_SUPPORTED_FILTERS:
+            print(f"{fname}: FILTER='{filt}' is not supported by Pan-STARRS DR2 "
+                  f"(supported: {sorted(PS1_SUPPORTED_FILTERS)}). "
+                  "Skipping zero-point for this image.")
+            continue
+
         ra_center = float(np.mean(table["RA"]))
         dec_center = float(np.mean(table["Dec"]))
 
-        catalog = query_field_catalog(ra_center, dec_center, radius_arcmin=2.0, ps1_filter='g')
+        catalog = query_field_catalog(ra_center, dec_center, radius_arcmin=2.0, ps1_filter=filt)
         if catalog is None:
             print(f"{fname}: no Pan-STARRS catalog data — skipping zero-point.")
             continue
 
-        matched = match_sources_to_catalog(table, catalog, ps1_filter='g', max_sep_arcsec=1.0)
+        matched = match_sources_to_catalog(table, catalog, ps1_filter=filt, max_sep_arcsec=1.0)
         zp, zp_sigma, n_used = compute_zeropoint(matched)
 
         dict_aper[fname]["zeropoint"] = zp
         dict_aper[fname]["zeropoint_sigma"] = zp_sigma
+        dict_aper[fname]["filter"] = filt
 
         table = apply_zeropoint(table, zp)
         dict_aper[fname]["final_aperture_phot_table"] = table
-        print(f"{fname}: zero-point applied.")
+        print(f"{fname}: zero-point applied (filter={filt}).")
 
         # -----------------------------
         # SAVE RESULTS TO DISK
@@ -332,7 +391,7 @@ def main():
             fwhm=dict_aper[fname].get("fwhm"),
             aperture_radius=dict_aper[fname].get("aperture_radius_used"),
             astrometry_method=astrometry_settings["method"],
-            photsys="PS1-g"
+            photsys=f"PS1-{filt}"
         )
         print()
 
@@ -361,12 +420,10 @@ def main():
             )
             continue
         any_table = True
-        # Show first valid table only
         table.pprint(
             max_width=-1,
-            max_lines=1
+            max_lines=-1
         )
-        break
     if not any_table:
         print(
             "\nWARNING: No photometry tables were produced."
