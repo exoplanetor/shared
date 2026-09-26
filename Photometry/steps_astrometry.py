@@ -1,4 +1,9 @@
 import numpy as np
+import time
+import json
+import requests
+from astropy.io import fits
+import os
 
 def select_astrometric_candidates(
         sources,
@@ -515,7 +520,7 @@ def print_solve_failure_help(error, n_sources, scale_lower, scale_upper):
         print("Suggestion: simply try again — astrometry.net's free service can be intermittent.")
         return
     print(f"Sent {n_sources} sources, scale hint {scale_lower}-{scale_upper} arcmin.")
-    if n_sources < 10:
+    if n_sources is not None and n_sources < 10:
         print("- Very few sources sent. Try lowering threshold_factor in find_stars to detect more stars.")
     print("- Double-check the scale hint matches your actual field of view.")
     print("- If detections look noisy (hot pixels, cosmic rays), tighten source detection/cleaning settings "
@@ -615,3 +620,251 @@ def solve_with_astrometry_net(
 
         return WCS(wcs_header)
 
+def solve_with_astrometry_net_image_upload(
+        image_path,
+        api_key,
+        scale_lower_arcmin=3.0,
+        scale_upper_arcmin=3.6,
+        ra=None,
+        dec=None,
+        search_radius_arcmin=None,
+        solve_timeout=300,
+        max_retries=2,
+):
+    """
+    Plate-solve by uploading the FULL IMAGE to astrometry.net, letting its
+    own source extraction run instead of ours. Slower than the source-list
+    method, but far more robust for crowded/extended fields (e.g. resolved
+    galaxies) where our DAOStarFinder detections may include extended
+    HII-region blobs rather than clean point sources, which can prevent
+    a valid geometric match.
+
+    Used as an automatic per-image fallback when solve_with_astrometry_net
+    (source-list method) fails on that image.
+
+    Returns astropy.wcs.WCS on success, or None if it fails / doesn't solve.
+    """
+    solve_kwargs = dict(
+        solve_timeout=solve_timeout,
+        scale_units="arcminwidth",
+        scale_type="ul",
+        scale_lower=scale_lower_arcmin,
+        scale_upper=scale_upper_arcmin,
+    )
+    if ra is not None and dec is not None:
+        solve_kwargs["center_ra"] = ra
+        solve_kwargs["center_dec"] = dec
+        if search_radius_arcmin is not None:
+            solve_kwargs["radius"] = search_radius_arcmin / 60.0
+
+    attempt = 0
+    while True:
+        attempt += 1
+        ast = AstrometryNet()
+        ast.api_key = api_key
+        try:
+            wcs_header = ast.solve_from_image(image_path, **solve_kwargs)
+        except Exception as e:
+            if _is_connection_error(e) and attempt <= max_retries:
+                print(f"\nConnection issue (attempt {attempt}/{max_retries + 1}), retrying...")
+                continue
+            print(f"astrometry.net image-upload solve failed: {e}")
+            print_solve_failure_help(e, None, scale_lower_arcmin, scale_upper_arcmin)
+            return None
+
+        if not wcs_header:
+            print("astrometry.net could not solve this field (image-upload method).")
+            print_solve_failure_help(None, None, scale_lower_arcmin, scale_upper_arcmin)
+            return None
+
+        return WCS(wcs_header)
+
+
+def _rebin_block_average(data, factor):
+    """Shrink a 2D array by averaging factor x factor blocks of pixels."""
+    ny, nx = data.shape
+    ny_crop = (ny // factor) * factor
+    nx_crop = (nx // factor) * factor
+    data_cropped = data[:ny_crop, :nx_crop]
+    reshaped = data_cropped.reshape((ny_crop // factor, factor, nx_crop // factor, factor))
+    return reshaped.mean(axis=(1, 3))
+
+
+def _create_downsampled_fits(orig_path, factor):
+    """
+    Write a temporary, smaller FITS file (factor x smaller per side) for
+    upload, to avoid multi-minute upload timeouts on large raw images.
+    Returns (temp_path, (orig_ny, orig_nx)) so the resulting WCS can later
+    be rescaled back to full resolution.
+    """
+    import tempfile
+    with fits.open(orig_path) as hdul:
+        data = hdul[0].data.astype(float)
+        header = hdul[0].header.copy()
+
+    ny, nx = data.shape
+    ds = _rebin_block_average(data, factor)
+
+    header["NAXIS1"] = ds.shape[1]
+    header["NAXIS2"] = ds.shape[0]
+
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix="astrometry_ds_", suffix=".fits")
+    os.close(tmp_fd)
+    fits.PrimaryHDU(data=ds.astype(np.float32), header=header).writeto(tmp_path, overwrite=True)
+    return tmp_path, (ny, nx)
+
+
+def _scale_wcs_to_fullres(wcs_header, factor, orig_nx, orig_ny):
+    """Rescale a WCS header solved on a downsampled image back to full resolution."""
+    hdr = wcs_header.copy()
+    hdr["NAXIS1"] = orig_nx
+    hdr["NAXIS2"] = orig_ny
+    for key in ("CRPIX1", "CRPIX2"):
+        if key in hdr:
+            hdr[key] = float(factor) * (float(hdr[key]) - 1.0) + 1.0
+    for key in ("CD1_1", "CD1_2", "CD2_1", "CD2_2", "CDELT1", "CDELT2"):
+        if key in hdr:
+            hdr[key] = float(hdr[key]) / float(factor)
+    return hdr
+
+
+
+
+
+
+def solve_with_astrometry_net_raw_upload(
+        image_path,
+        api_key,
+        scale_lower_arcmin=3.0,
+        scale_upper_arcmin=3.6,
+        ra=None,
+        dec=None,
+        search_radius_arcmin=None,
+        solve_timeout=300,
+        poll_interval=5,
+        downsample_factor=4,
+):
+    """
+    Plate-solve by uploading the actual image FILE directly to astrometry.net's
+    server via a raw multipart upload (not astroquery's solve_from_image,
+    which runs a second LOCAL detection pass instead of true server-side
+    extraction). This gets astrometry.net's own, more robust extraction
+    algorithm - the right tool for crowded/extended fields.
+
+    Returns astropy.wcs.WCS on success, or None if it fails / doesn't solve.
+    """
+    BASEURL = "http://nova.astrometry.net/api"
+    ds_path = None
+    orig_dims = None
+    upload_path = image_path
+    if downsample_factor and downsample_factor > 1:
+        try:
+            ds_path, orig_dims = _create_downsampled_fits(image_path, downsample_factor)
+            upload_path = ds_path
+            print(f"Downsampled image {downsample_factor}x for upload "
+                  f"(original: {orig_dims[1]}x{orig_dims[0]})")
+        except Exception as e:
+            print(f"Downsampling failed ({e}), uploading full-resolution image instead.")
+    # --- login ---
+    try:
+        r = requests.post(
+            f"{BASEURL}/login",
+            data={"request-json": json.dumps({"apikey": api_key})},
+            timeout=30
+        )
+        r.raise_for_status()
+        session = r.json().get("session")
+        if not session:
+            print("astrometry.net raw upload: login failed, no session returned.")
+            return None
+    except Exception as e:
+        print(f"astrometry.net raw upload: login failed: {e}")
+        return None
+
+    # --- upload the actual image file ---
+    request_json = {
+        "session": session,
+        "publicly_visible": "n",
+        "scale_units": "arcminwidth",
+        "scale_type": "ul",
+        "scale_lower": float(scale_lower_arcmin),
+        "scale_upper": float(scale_upper_arcmin),
+    }
+    if ra is not None and dec is not None:
+        request_json["center_ra"] = float(ra)
+        request_json["center_dec"] = float(dec)
+        if search_radius_arcmin is not None:
+            request_json["radius"] = float(search_radius_arcmin) / 60.0
+
+    try:
+        print("Uploading image directly to astrometry.net for server-side extraction...")
+        with open(upload_path, "rb") as fh:
+            files = {"file": (os.path.basename(upload_path), fh)}
+            data = {"request-json": json.dumps(request_json)}
+            r = requests.post(f"{BASEURL}/upload", files=files, data=data, timeout=180)
+        r.raise_for_status()
+        submission_id = r.json().get("subid")
+        if not submission_id:
+            print("astrometry.net raw upload: upload did not return a submission id.")
+            return None
+    except Exception as e:
+        print(f"astrometry.net raw upload: upload failed: {e}")
+        return None
+
+    # --- poll for a job id ---
+    t0 = time.time()
+    job_id = None
+    while time.time() - t0 < solve_timeout:
+        try:
+            r = requests.get(f"{BASEURL}/submissions/{submission_id}", timeout=30)
+            r.raise_for_status()
+            jobs = r.json().get("jobs", [])
+            if jobs and jobs[0] is not None:
+                job_id = jobs[0]
+                break
+        except Exception:
+            pass
+        time.sleep(poll_interval)
+
+    if job_id is None:
+        print("astrometry.net raw upload: timed out waiting for a job to start.")
+        return None
+
+    # --- poll job status ---
+    t0 = time.time()
+    status = None
+    while time.time() - t0 < solve_timeout:
+        try:
+            r = requests.get(f"{BASEURL}/jobs/{job_id}", timeout=30)
+            r.raise_for_status()
+            status = r.json().get("status")
+            if status in ("success", "failure"):
+                break
+        except Exception:
+            pass
+        time.sleep(poll_interval)
+
+    if status != "success":
+        print(f"astrometry.net raw upload: job did not succeed (status={status}).")
+        return None
+
+    # --- download the solved WCS header ---
+    try:
+        r = requests.get(f"http://nova.astrometry.net/wcs_file/{job_id}", timeout=30)
+        r.raise_for_status()
+        if not r.content.startswith(b"SIMPLE"):
+            print("astrometry.net raw upload: WCS file response was not valid FITS "
+                  "(possibly a human-verification page).")
+            return None
+        import io
+        with fits.open(io.BytesIO(r.content)) as wcs_hdul:
+            wcs_header = wcs_hdul[0].header
+        if orig_dims is not None:
+            wcs_header = _scale_wcs_to_fullres(wcs_header, downsample_factor, orig_dims[1], orig_dims[0])
+        return WCS(wcs_header)
+    except Exception as e:
+        print(f"astrometry.net raw upload: failed to download/parse WCS file: {e}")
+        return None
+    finally:
+        if ds_path and os.path.exists(ds_path):
+            os.unlink(ds_path)
