@@ -233,6 +233,7 @@ def main():
     # =========================================================
 
     dict_aper = create_dict_aper(images)
+    image_names = list(dict_images.keys())
     filter_params = get_filter_params_from_user()
     initial_fwhm_guess = 18.0
     # =========================================================
@@ -1021,9 +1022,12 @@ def main():
             continue
 
         save_astrometric_image(
-            image_path=dict_images[fname]["path"],
+            image_data=dict_images[fname]["data"],
+            original_header=dict_images[fname]["header"],
+            wcs=wcs,
             output_dir=images_dir,
-            wcs=wcs
+            original_filename=fname,
+            original_path=dict_images[fname]["path"]
         )
 
     # =========================================================
@@ -1031,9 +1035,9 @@ def main():
     # =========================================================
 
     from steps_zeropoint import (
-        query_ps1_catalog,
-        match_sources_to_ps1,
-        calculate_zeropoint,
+        query_field_catalog,
+        match_sources_to_catalog,
+        compute_zeropoint,
         apply_zeropoint
     )
 
@@ -1139,10 +1143,11 @@ def main():
         # -----------------------------------------------------
         # QUERY PS1
         # -----------------------------------------------------
-
-        ps1_table = query_ps1_catalog(
+        ps1_table = query_field_catalog(
             ra_center,
-            dec_center
+            dec_center,
+            2.0,
+            ps1_filter=filter_name
         )
 
         if ps1_table is None or len(ps1_table) == 0:
@@ -1156,7 +1161,7 @@ def main():
         # MATCH SOURCES
         # -----------------------------------------------------
 
-        matched = match_sources_to_ps1(
+        matched = match_sources_to_catalog(
             table,
             ps1_table,
             filter_name
@@ -1174,9 +1179,8 @@ def main():
         # -----------------------------------------------------
 
         zp, zp_err, n_zp_stars = (
-            calculate_zeropoint(
-                matched,
-                filter_name
+            compute_zeropoint(
+                matched
             )
         )
 
@@ -1199,8 +1203,7 @@ def main():
 
         calibrated_table = apply_zeropoint(
             table,
-            zp,
-            zp_err
+            zp
         )
 
         dict_aper[fname][
@@ -1227,11 +1230,11 @@ def main():
         )
 
         save_photometry_table(
-            table=calibrated_table,
-            image_filename=fname,
+            photometry_table=calibrated_table,
+            original_filename=fname,
             output_dir=images_dir,
             zp=zp,
-            zp_err=zp_err,
+            zp_sigma=zp_err,
             n_zp_stars=n_zp_stars,
             fwhm=fwhm,
             aperture_radius=aperture_radius,
