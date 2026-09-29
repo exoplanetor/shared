@@ -370,7 +370,7 @@ def main():
             solve_with_astrometry_net,
             solve_with_astrometry_net_raw_upload,
             review_astrometric_candidates,
-            run_manual_wcs
+            create_manual_wcs
         )
     # =========================================================
     # ASTROMETRY
@@ -387,7 +387,7 @@ def main():
             solve_with_astrometry_net,
             solve_with_astrometry_net_raw_upload,
             review_astrometric_candidates,
-            run_manual_wcs
+            create_manual_wcs
         )
 
         # -----------------------------------------------------
@@ -471,7 +471,8 @@ def main():
 
             candidates = select_astrometric_candidates(
                 found_stars,
-                image_data=image_data
+                image_data.shape,
+                fwhm
             )
 
             dict_aper[fname][
@@ -596,7 +597,7 @@ def main():
 
                     continue
 
-                wcs_solution = run_manual_wcs(
+                wcs_solution = create_manual_wcs(
                     fname,
                     dict_images[fname],
                     reviewed_candidates
@@ -735,7 +736,7 @@ def main():
 
                     from steps_astrometry import (
                         review_astrometric_candidates,
-                        run_manual_wcs
+                        create_manual_wcs
                     )
 
                     reviewed_candidates = (
@@ -751,7 +752,7 @@ def main():
                         and len(reviewed_candidates) > 0
                     ):
 
-                        reference_wcs = run_manual_wcs(
+                        reference_wcs = create_manual_wcs(
                             reference_fname,
                             dict_images[reference_fname],
                             reviewed_candidates
