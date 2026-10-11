@@ -1,14 +1,12 @@
 import os
 import glob
 import datetime
-
+import astropy.units as u
 import numpy as np
-
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from scipy import ndimage
 from scipy.spatial import cKDTree
-
 from astropy.table import Table
 from photutils.detection import DAOStarFinder
 from astropy.modeling import models, fitting
@@ -385,7 +383,11 @@ def apply_footprint_filter(
     # ========================================================
     # CLOSE-SOURCE MERGING
     # ========================================================
-
+    print(
+    f"DEBUG footprint: after small-footprint rejection = "
+    f"{0 if filtered is None else len(filtered)}"
+    )
+    
     if (
         merge_close
         and filtered is not None
@@ -689,7 +691,10 @@ def find_stars(
     found = daofind(
         data_bkgsub
     )
-
+    print(
+    f"DAOStarFinder raw detections: "
+    f"{0 if found is None else len(found)}"
+    )
     # --------------------------------------------------------
     # FOOTPRINT FILTER
     # --------------------------------------------------------
@@ -708,7 +713,10 @@ def find_stars(
             data,
             **filter_params
         )
-
+        print(
+            f"Detections after footprint filter: "
+            f"{0 if found is None else len(found)}"
+        )
     return found
 
 
@@ -1369,13 +1377,8 @@ def build_photometry_table(
                 sources["ycentroid"]
             )
 
-            table_phot["RA"] = (
-                sky.ra.deg
-            )
-
-            table_phot["Dec"] = (
-                sky.dec.deg
-            )
+            table_phot["RA"] = sky.ra.deg
+            table_phot["Dec"] = sky.dec.deg
 
         else:
 
@@ -1558,9 +1561,40 @@ def save_photometry_table(
 
     try:
 
+
+        # Make a copy so the original numeric table remains unchanged.
+        save_table = photometry_table.copy()
+        
+        # Format RA and Dec as standard sexagesimal strings.
+        if "RA" in save_table.colnames and "Dec" in save_table.colnames:
+            import astropy.units as u
+            from astropy.coordinates import Angle
+        
+            save_table["RA"] = [
+                Angle(value, unit=u.deg).to_string(
+                    unit=u.hourangle,
+                    sep=":",
+                    precision=2,
+                    pad=True
+                )
+                for value in photometry_table["RA"]
+            ]
+        
+            save_table["Dec"] = [
+                Angle(value, unit=u.deg).to_string(
+                    unit=u.deg,
+                    sep=":",
+                    precision=2,
+                    pad=True,
+                    alwayssign=True
+                )
+                for value in photometry_table["Dec"]
+            ]
+        
         hdu = fits.BinTableHDU(
-            data=photometry_table.as_array()
+            data=save_table.as_array()
         )
+        
 
         # ----------------------------------------------------
         # PHOTOMETRIC CALIBRATION
