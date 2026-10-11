@@ -4,6 +4,7 @@ import json
 import requests
 from astropy.io import fits
 import os
+import io
 
 def select_astrometric_candidates(
         sources,
@@ -690,42 +691,161 @@ def _rebin_block_average(data, factor):
     return reshaped.mean(axis=(1, 3))
 
 
+
 def _create_downsampled_fits(orig_path, factor):
     """
-    Write a temporary, smaller FITS file (factor x smaller per side) for
-    upload, to avoid multi-minute upload timeouts on large raw images.
-    Returns (temp_path, (orig_ny, orig_nx)) so the resulting WCS can later
-    be rescaled back to full resolution.
+    Create a temporary downsampled FITS image.
+    Returns (temp_path, (orig_ny, orig_nx)).
     """
     import tempfile
+    import re
+
+    factor = int(factor)
+    if factor < 1:
+        raise ValueError("Downsample factor must be >= 1.")
+
     with fits.open(orig_path) as hdul:
-        data = hdul[0].data.astype(float)
+        if hdul[0].data is None:
+            raise ValueError("Primary FITS HDU has no image data.")
+
+        data = np.asarray(hdul[0].data, dtype=float)
         header = hdul[0].header.copy()
+
+    if data.ndim != 2:
+        raise ValueError(
+            f"Expected a 2D FITS image, got {data.ndim} dimensions."
+        )
 
     ny, nx = data.shape
     ds = _rebin_block_average(data, factor)
 
+    if ds.size == 0:
+        raise ValueError("Downsampled image is empty.")
+
+    header["NAXIS"] = 2
     header["NAXIS1"] = ds.shape[1]
     header["NAXIS2"] = ds.shape[0]
 
-    tmp_fd, tmp_path = tempfile.mkstemp(prefix="astrometry_ds_", suffix=".fits")
+    # Transform reference pixels.
+    for key in ("CRPIX1", "CRPIX2"):
+        if key in header:
+            header[key] = (
+                float(header[key]) - (factor + 1.0) / 2.0
+            ) / factor + 1.0
+
+    # Transform the linear pixel scale.
+    has_cd = any(
+        key in header
+        for key in ("CD1_1", "CD1_2", "CD2_1", "CD2_2")
+    )
+
+    if has_cd:
+        for key in ("CD1_1", "CD1_2", "CD2_1", "CD2_2"):
+            if key in header:
+                header[key] = float(header[key]) * factor
+    else:
+        for key in ("CDELT1", "CDELT2"):
+            if key in header:
+                header[key] = float(header[key]) * factor
+
+    # Transform SIP polynomial coefficients, if present.
+    for key in list(header.keys()):
+        match = re.fullmatch(
+            r"(A|B|AP|BP)_(\d+)_(\d+)",
+            key
+        )
+        if match:
+            i = int(match.group(2))
+            j = int(match.group(3))
+            degree = i + j
+
+            if degree >= 2:
+                header[key] = (
+                    float(header[key]) * factor ** (degree - 1)
+                )
+
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        prefix="astrometry_ds_",
+        suffix=".fits"
+    )
     os.close(tmp_fd)
-    fits.PrimaryHDU(data=ds.astype(np.float32), header=header).writeto(tmp_path, overwrite=True)
+
+    try:
+        fits.PrimaryHDU(
+            data=ds.astype(np.float32),
+            header=header
+        ).writeto(tmp_path, overwrite=True)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
     return tmp_path, (ny, nx)
 
 
-def _scale_wcs_to_fullres(wcs_header, factor, orig_nx, orig_ny):
-    """Rescale a WCS header solved on a downsampled image back to full resolution."""
+
+def _scale_wcs_to_fullres(
+    wcs_header,
+    factor,
+    orig_nx,
+    orig_ny
+):
+    """
+    Rescale a WCS solved on a downsampled image to full resolution.
+    """
+    import re
+
+    factor = float(factor)
+    if factor <= 0:
+        raise ValueError("Scale factor must be positive.")
+
     hdr = wcs_header.copy()
-    hdr["NAXIS1"] = orig_nx
-    hdr["NAXIS2"] = orig_ny
+
+    hdr["NAXIS"] = 2
+    hdr["NAXIS1"] = int(orig_nx)
+    hdr["NAXIS2"] = int(orig_ny)
+
+    # Restore full-resolution reference pixels.
     for key in ("CRPIX1", "CRPIX2"):
         if key in hdr:
-            hdr[key] = float(factor) * (float(hdr[key]) - 1.0) + 1.0
-    for key in ("CD1_1", "CD1_2", "CD2_1", "CD2_2", "CDELT1", "CDELT2"):
-        if key in hdr:
-            hdr[key] = float(hdr[key]) / float(factor)
+            hdr[key] = (
+                float(factor) * (float(hdr[key]) - 1.0)
+                + (factor + 1.0) / 2.0
+            )
+
+    # Restore the linear pixel scale.
+    has_cd = any(
+        key in hdr
+        for key in ("CD1_1", "CD1_2", "CD2_1", "CD2_2")
+    )
+
+    if has_cd:
+        for key in ("CD1_1", "CD1_2", "CD2_1", "CD2_2"):
+            if key in hdr:
+                hdr[key] = float(hdr[key]) / factor
+    else:
+        for key in ("CDELT1", "CDELT2"):
+            if key in hdr:
+                hdr[key] = float(hdr[key]) / factor
+
+    # Restore SIP polynomial coefficients, if present.
+    for key in list(hdr.keys()):
+        match = re.fullmatch(
+            r"(A|B|AP|BP)_(\d+)_(\d+)",
+            key
+        )
+        if match:
+            i = int(match.group(2))
+            j = int(match.group(3))
+            degree = i + j
+
+            if degree >= 2:
+                hdr[key] = (
+                    float(hdr[key]) * factor ** (1 - degree)
+                )
+
     return hdr
+
 
 
 
@@ -745,126 +865,237 @@ def solve_with_astrometry_net_raw_upload(
         downsample_factor=4,
 ):
     """
-    Plate-solve by uploading the actual image FILE directly to astrometry.net's
-    server via a raw multipart upload (not astroquery's solve_from_image,
-    which runs a second LOCAL detection pass instead of true server-side
-    extraction). This gets astrometry.net's own, more robust extraction
-    algorithm - the right tool for crowded/extended fields.
+    Upload an image directly to astrometry.net for server-side
+    source extraction and plate solving.
 
-    Returns astropy.wcs.WCS on success, or None if it fails / doesn't solve.
+    Returns astropy.wcs.WCS on success, otherwise None.
     """
+
     BASEURL = "http://nova.astrometry.net/api"
     ds_path = None
-    orig_dims = None
-    upload_path = image_path
-    if downsample_factor and downsample_factor > 1:
-        try:
-            ds_path, orig_dims = _create_downsampled_fits(image_path, downsample_factor)
-            upload_path = ds_path
-            print(f"Downsampled image {downsample_factor}x for upload "
-                  f"(original: {orig_dims[1]}x{orig_dims[0]})")
-        except Exception as e:
-            print(f"Downsampling failed ({e}), uploading full-resolution image instead.")
-    # --- login ---
+
     try:
+        upload_path = image_path
+        orig_dims = None
+
+        # -----------------------------------------------------
+        # DOWNSAMPLE IMAGE
+        # -----------------------------------------------------
+
+        if downsample_factor and downsample_factor > 1:
+            try:
+                ds_path, orig_dims = _create_downsampled_fits(
+                    image_path,
+                    downsample_factor
+                )
+                upload_path = ds_path
+
+                print(
+                    f"Downsampled image {downsample_factor}x "
+                    f"for upload "
+                    f"(original: {orig_dims[1]}x{orig_dims[0]})."
+                )
+
+            except Exception as e:
+                print(
+                    f"Downsampling failed ({e}); "
+                    "uploading full-resolution image instead."
+                )
+                upload_path = image_path
+                ds_path = None
+                orig_dims = None
+
+        # -----------------------------------------------------
+        # LOGIN
+        # -----------------------------------------------------
+
         r = requests.post(
             f"{BASEURL}/login",
             data={"request-json": json.dumps({"apikey": api_key})},
             timeout=30
         )
         r.raise_for_status()
+
         session = r.json().get("session")
+
         if not session:
-            print("astrometry.net raw upload: login failed, no session returned.")
+            print(
+                "astrometry.net: login failed; "
+                "no session returned."
+            )
             return None
-    except Exception as e:
-        print(f"astrometry.net raw upload: login failed: {e}")
-        return None
 
-    # --- upload the actual image file ---
-    request_json = {
-        "session": session,
-        "publicly_visible": "n",
-        "scale_units": "arcminwidth",
-        "scale_type": "ul",
-        "scale_lower": float(scale_lower_arcmin),
-        "scale_upper": float(scale_upper_arcmin),
-    }
-    if ra is not None and dec is not None:
-        request_json["center_ra"] = float(ra)
-        request_json["center_dec"] = float(dec)
-        if search_radius_arcmin is not None:
-            request_json["radius"] = float(search_radius_arcmin) / 60.0
+        # -----------------------------------------------------
+        # UPLOAD IMAGE
+        # -----------------------------------------------------
 
-    try:
-        print("Uploading image directly to astrometry.net for server-side extraction...")
+        request_json = {
+            "session": session,
+            "publicly_visible": "n",
+            "scale_units": "arcminwidth",
+            "scale_type": "ul",
+            "scale_lower": float(scale_lower_arcmin),
+            "scale_upper": float(scale_upper_arcmin),
+        }
+
+        if ra is not None and dec is not None:
+            request_json["center_ra"] = float(ra)
+            request_json["center_dec"] = float(dec)
+
+            if search_radius_arcmin is not None:
+                # Astrometry.net radius is in degrees.
+                request_json["radius"] = (
+                    float(search_radius_arcmin) / 60.0
+                )
+
+        print(
+            "Uploading image to astrometry.net "
+            "for server-side extraction..."
+        )
+
         with open(upload_path, "rb") as fh:
-            files = {"file": (os.path.basename(upload_path), fh)}
-            data = {"request-json": json.dumps(request_json)}
-            r = requests.post(f"{BASEURL}/upload", files=files, data=data, timeout=180)
+            files = {
+                "file": (os.path.basename(upload_path), fh)
+            }
+            data = {
+                "request-json": json.dumps(request_json)
+            }
+
+            r = requests.post(
+                f"{BASEURL}/upload",
+                files=files,
+                data=data,
+                timeout=180
+            )
+
         r.raise_for_status()
+
         submission_id = r.json().get("subid")
-        if not submission_id:
-            print("astrometry.net raw upload: upload did not return a submission id.")
+
+        if submission_id is None:
+            print(
+                "astrometry.net: upload returned no submission ID."
+            )
             return None
-    except Exception as e:
-        print(f"astrometry.net raw upload: upload failed: {e}")
-        return None
 
-    # --- poll for a job id ---
-    t0 = time.time()
-    job_id = None
-    while time.time() - t0 < solve_timeout:
-        try:
-            r = requests.get(f"{BASEURL}/submissions/{submission_id}", timeout=30)
-            r.raise_for_status()
-            jobs = r.json().get("jobs", [])
-            if jobs and jobs[0] is not None:
-                job_id = jobs[0]
-                break
-        except Exception:
-            pass
-        time.sleep(poll_interval)
+        # -----------------------------------------------------
+        # WAIT FOR JOB ID
+        # -----------------------------------------------------
 
-    if job_id is None:
-        print("astrometry.net raw upload: timed out waiting for a job to start.")
-        return None
+        t0 = time.time()
+        job_id = None
 
-    # --- poll job status ---
-    t0 = time.time()
-    status = None
-    while time.time() - t0 < solve_timeout:
-        try:
-            r = requests.get(f"{BASEURL}/jobs/{job_id}", timeout=30)
-            r.raise_for_status()
-            status = r.json().get("status")
-            if status in ("success", "failure"):
-                break
-        except Exception:
-            pass
-        time.sleep(poll_interval)
+        while time.time() - t0 < solve_timeout:
+            try:
+                r = requests.get(
+                    f"{BASEURL}/submissions/{submission_id}",
+                    timeout=30
+                )
+                r.raise_for_status()
 
-    if status != "success":
-        print(f"astrometry.net raw upload: job did not succeed (status={status}).")
-        return None
+                jobs = r.json().get("jobs", [])
 
-    # --- download the solved WCS header ---
-    try:
-        r = requests.get(f"http://nova.astrometry.net/wcs_file/{job_id}", timeout=30)
+                if jobs and jobs[0] is not None:
+                    job_id = jobs[0]
+                    break
+
+            except requests.RequestException:
+                pass
+
+            time.sleep(poll_interval)
+
+        if job_id is None:
+            print(
+                "astrometry.net: timed out waiting for a job."
+            )
+            return None
+
+        # -----------------------------------------------------
+        # WAIT FOR SOLVE RESULT
+        # -----------------------------------------------------
+
+        t0 = time.time()
+        status = None
+
+        while time.time() - t0 < solve_timeout:
+            try:
+                r = requests.get(
+                    f"{BASEURL}/jobs/{job_id}",
+                    timeout=30
+                )
+                r.raise_for_status()
+
+                status = r.json().get("status")
+
+                if status in ("success", "failure"):
+                    break
+
+            except requests.RequestException:
+                pass
+
+            time.sleep(poll_interval)
+
+        if status != "success":
+            print(
+                "astrometry.net: solve failed or timed out "
+                f"(status={status})."
+            )
+            return None
+
+        # -----------------------------------------------------
+        # DOWNLOAD SOLVED WCS
+        # -----------------------------------------------------
+
+        r = requests.get(
+            f"http://nova.astrometry.net/wcs_file/{job_id}",
+            timeout=30
+        )
         r.raise_for_status()
-        if not r.content.startswith(b"SIMPLE"):
-            print("astrometry.net raw upload: WCS file response was not valid FITS "
-                  "(possibly a human-verification page).")
+
+        if not r.content or not r.content.startswith(b"SIMPLE"):
+            print(
+                "astrometry.net: downloaded WCS is not a "
+                "valid FITS response."
+            )
             return None
-        import io
+
         with fits.open(io.BytesIO(r.content)) as wcs_hdul:
-            wcs_header = wcs_hdul[0].header
+            wcs_header = wcs_hdul[0].header.copy()
+
+        # -----------------------------------------------------
+        # RESTORE ORIGINAL IMAGE SCALE
+        # -----------------------------------------------------
+
         if orig_dims is not None:
-            wcs_header = _scale_wcs_to_fullres(wcs_header, downsample_factor, orig_dims[1], orig_dims[0])
-        return WCS(wcs_header)
+            wcs_header = _scale_wcs_to_fullres(
+                wcs_header,
+                downsample_factor,
+                orig_dims[1],
+                orig_dims[0]
+            )
+
+        solution = WCS(wcs_header)
+
+        if not solution.has_celestial:
+            print(
+                "astrometry.net: returned WCS has no celestial axes."
+            )
+            return None
+
+        return solution
+
     except Exception as e:
-        print(f"astrometry.net raw upload: failed to download/parse WCS file: {e}")
+        print(
+            f"astrometry.net raw upload failed: {e}"
+        )
         return None
+
     finally:
+        # Always clean up the temporary downsampled FITS.
         if ds_path and os.path.exists(ds_path):
-            os.unlink(ds_path)
+            try:
+                os.unlink(ds_path)
+            except OSError as e:
+                print(
+                    f"Warning: could not remove temporary file: {e}"
+                )
