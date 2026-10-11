@@ -28,94 +28,248 @@ from steps_photometry import (
 
 def get_filter_params_from_user():
     """
-    Ask the user whether to customize the footprint filter.
+    Get source detection and footprint filtering parameters.
+
+    Press Enter or select 'n' to use all default settings.
+    Select 'y' to customize the parameters.
 
     Returns
     -------
     dict
-        Parameters passed to apply_footprint_filter().
+        Parameters for source detection and footprint filtering.
+        'threshold_factor' is passed separately to find_stars().
     """
+
+    defaults = {
+        "threshold_factor": 5.0,
+        "threshold_sigma": 3.0,
+        "smoothing_sigma": 0.0,
+        "min_area": 10,
+        "connectivity": 8,
+        "peak_to_total_thresh": 0.2,
+        "hot_pixel_sigma_thresh": 1e10,
+        "merge_close": False,
+        "merge_radius": 5.0,
+    }
+
+    print()
+    print("=" * 55)
+    print("SOURCE DETECTION AND FOOTPRINT FILTER SETTINGS")
+    print("=" * 55)
+
+    customize = input(
+        "Customize source detection and footprint filtering? "
+        "(y/n, default n): "
+    ).strip().lower()
+
+    # Use defaults without asking for individual values.
+    if customize != "y":
+        print("Using default settings.")
+        return defaults.copy()
+
+    params = defaults.copy()
 
     print()
     print("Source footprint filtering")
-    print("--------------------------")
+    print("-" * 55)
+    print(
+        "Press Enter to keep the default value for each parameter."
+    )
 
-    customize = input(
-        "Customize footprint filter? (y/n, default n): "
+    # ---------------------------------------------------------
+    # Source detection threshold
+    # ---------------------------------------------------------
+
+    print()
+    print("Source detection threshold factor")
+    print(
+        "Controls detection sensitivity. Lower values may detect "
+        "fainter stars but can also increase false detections."
+    )
+
+    while True:
+        try:
+            value = input(
+                f"Threshold factor "
+                f"(default {defaults['threshold_factor']}): "
+            ).strip()
+
+            if value:
+                value = float(value)
+                if value <= 0:
+                    raise ValueError
+                params["threshold_factor"] = value
+
+            break
+
+        except ValueError:
+            print("Please enter a positive number.")
+
+    # ---------------------------------------------------------
+    # Footprint filtering parameters
+    # ---------------------------------------------------------
+
+    print()
+    print("Footprint filter parameters")
+    print("-" * 55)
+
+    while True:
+        try:
+            value = input(
+                f"Threshold sigma "
+                f"(default {defaults['threshold_sigma']}): "
+            ).strip()
+
+            if value:
+                value = float(value)
+                if value <= 0:
+                    raise ValueError
+                params["threshold_sigma"] = value
+
+            break
+
+        except ValueError:
+            print("Please enter a positive number.")
+
+    while True:
+        try:
+            value = input(
+                f"Smoothing sigma "
+                f"(default {defaults['smoothing_sigma']}): "
+            ).strip()
+
+            if value:
+                value = float(value)
+                if value < 0:
+                    raise ValueError
+                params["smoothing_sigma"] = value
+
+            break
+
+        except ValueError:
+            print("Please enter a non-negative number.")
+
+    while True:
+        try:
+            value = input(
+                f"Minimum footprint area in pixels "
+                f"(default {defaults['min_area']}): "
+            ).strip()
+
+            if value:
+                value = int(value)
+                if value < 1:
+                    raise ValueError
+                params["min_area"] = value
+
+            break
+
+        except ValueError:
+            print("Please enter a positive integer.")
+
+    while True:
+        value = input(
+            f"Connectivity (4 or 8, default "
+            f"{defaults['connectivity']}): "
+        ).strip()
+
+        if not value:
+            break
+
+        try:
+            value = int(value)
+            if value not in (4, 8):
+                raise ValueError
+
+            params["connectivity"] = value
+            break
+
+        except ValueError:
+            print("Please enter either 4 or 8.")
+
+    while True:
+        try:
+            value = input(
+                f"Peak-to-total threshold "
+                f"(default {defaults['peak_to_total_thresh']}): "
+            ).strip()
+
+            if value:
+                value = float(value)
+                if not 0 <= value <= 1:
+                    raise ValueError
+                params["peak_to_total_thresh"] = value
+
+            break
+
+        except ValueError:
+            print("Please enter a number between 0 and 1.")
+
+    while True:
+        try:
+            value = input(
+                f"Hot-pixel sigma threshold "
+                f"(default {defaults['hot_pixel_sigma_thresh']}): "
+            ).strip()
+
+            if value:
+                value = float(value)
+                if value <= 0:
+                    raise ValueError
+                params["hot_pixel_sigma_thresh"] = value
+
+            break
+
+        except ValueError:
+            print("Please enter a positive number.")
+
+    # ---------------------------------------------------------
+    # Merge nearby detections
+    # ---------------------------------------------------------
+
+    value = input(
+        f"Merge nearby detections? "
+        f"(y/n, default {'y' if defaults['merge_close'] else 'n'}): "
     ).strip().lower()
 
-    if customize != "y":
-        return {
-            "threshold_sigma": 3.0,
-            "smoothing_sigma": 0,
-            "min_area": 10,
-            "connectivity": 8,
-            "peak_to_total_thresh": 0.2,
-            "hot_pixel_sigma_thresh": 1e10,
-            "merge_close": False,
-            "merge_radius": 5.0
-        }
+    if value in ("y", "yes"):
+        params["merge_close"] = True
+    elif value in ("n", "no"):
+        params["merge_close"] = False
 
-    threshold_sigma = float(
-        input(
-            "Threshold sigma (default 3): "
-        ) or 3
-    )
+    if params["merge_close"]:
+        while True:
+            try:
+                value = input(
+                    f"Merge radius in pixels "
+                    f"(default {defaults['merge_radius']}): "
+                ).strip()
 
-    smoothing_sigma = float(
-        input(
-            "Smoothing sigma (default 0): "
-        ) or 0
-    )
+                if value:
+                    value = float(value)
+                    if value <= 0:
+                        raise ValueError
+                    params["merge_radius"] = value
 
-    min_area = int(
-        input(
-            "Minimum footprint area in pixels (default 10): "
-        ) or 10
-    )
+                break
 
-    connectivity = int(
-        input(
-            "Connectivity (4 or 8, default 8): "
-        ) or 8
-    )
+            except ValueError:
+                print("Please enter a positive number.")
 
-    peak_to_total_thresh = float(
-        input(
-            "Peak/total threshold (default 0.2): "
-        ) or 0.2
-    )
+    # ---------------------------------------------------------
+    # Display selected settings
+    # ---------------------------------------------------------
 
-    hot_pixel_sigma_thresh = float(
-        input(
-            "Hot-pixel sigma threshold (default 1e10): "
-        ) or 1e10
-    )
+    print()
+    print("Selected settings")
+    print("-" * 55)
 
-    merge_close = (
-        input(
-            "Merge nearby detections? (y/n, default n): "
-        ).strip().lower() == "y"
-    )
+    for key, value in params.items():
+        print(f"{key}: {value}")
 
-    merge_radius = float(
-        input(
-            "Merge radius in pixels (default 5): "
-        ) or 5
-    )
+    print("=" * 55)
 
-    return {
-        "threshold_sigma": threshold_sigma,
-        "smoothing_sigma": smoothing_sigma,
-        "min_area": min_area,
-        "connectivity": connectivity,
-        "peak_to_total_thresh": peak_to_total_thresh,
-        "hot_pixel_sigma_thresh": hot_pixel_sigma_thresh,
-        "merge_close": merge_close,
-        "merge_radius": merge_radius
-    }
-
-
+    return params
 def get_astrometry_choice():
     """
     Ask whether astrometric calibration should be performed.
@@ -132,6 +286,7 @@ def get_astrometry_choice():
 def get_astrometry_settings():
     """
     Ask the user which astrometry method to use.
+    Defaults to astrometry.net automatic when Enter is pressed.
     """
 
     print()
@@ -141,11 +296,10 @@ def get_astrometry_settings():
     print("2) manual")
 
     choice = input(
-        "Choose method (1/2, default 2): "
-    ).strip()
+        "Choose method (1/2, default 1): "
+    ).strip() or "1"
 
     if choice == "1":
-
         api_key = ASTROMETRY_API_KEY
 
         if not api_key:
@@ -158,10 +312,15 @@ def get_astrometry_settings():
             "api_key": api_key
         }
 
-    return {
-        "method": "manual"
-    }
+    elif choice == "2":
+        return {
+            "method": "manual"
+        }
 
+    else:
+        raise ValueError(
+            "Invalid choice. Please enter 1 or 2."
+        )
 
 # =============================================================
 # MAIN
@@ -256,37 +415,48 @@ def main():
     print("=================================================")
     print("SOURCE DETECTION")
     print("=================================================")
-
+    print("### RUNNING SOURCE DETECTION BLOCK V2 ###", flush=True)
+    
+    print(
+        f"Source detection threshold factor: "
+        f"{filter_params['threshold_factor']}"
+    )
+    
     for fname in dict_images.keys():
-
+    
         image_data = dict_images[fname]["clean_data"]
-
-        print(
-            f"{fname}: detecting sources..."
-        )
-
+    
+        print(f"{fname}: detecting sources...")
+    
         found_stars = find_stars(
             image_path=dict_images[fname]["path"],
             image_index=0,
-            threshold_factor=6.0,
+            threshold_factor=filter_params["threshold_factor"],
             apply_filter=True,
-            filter_params=filter_params,
+            filter_params={
+                key: value
+                for key, value in filter_params.items()
+                if key != "threshold_factor"
+            },
             fwhm_guess=initial_fwhm_guess,
             image_data=image_data
         )
-
+    
+        print(
+            f"DEBUG: find_stars returned "
+            f"{0 if found_stars is None else len(found_stars)} sources"
+        )
+    
         if found_stars is None or len(found_stars) == 0:
-
-            print(
-                f"{fname}: no usable sources found."
-            )
-
+    
+            print(f"{fname}: no usable sources found.")
+    
             dict_aper[fname]["sources found"] = None
             dict_aper[fname]["fwhm"] = None
             dict_aper[fname]["fwhm_n"] = 0
-
+    
             continue
-
+    
         print(
             f"{fname}: {len(found_stars)} sources found "
             "after footprint filtering."
@@ -356,44 +526,19 @@ def main():
     if perform_astrometry:
         astrometry_settings = get_astrometry_settings()
 
+
     # =========================================================
     # ASTROMETRY
     # =========================================================
 
     if perform_astrometry:
 
-        # -----------------------------------------------------
-        # IMPORT ASTROMETRY FUNCTIONS
-        # -----------------------------------------------------
-
         from steps_astrometry import (
             select_astrometric_candidates,
-            solve_with_astrometry_net,
             solve_with_astrometry_net_raw_upload,
             review_astrometric_candidates,
             create_manual_wcs
         )
-    # =========================================================
-    # ASTROMETRY
-    # =========================================================
-
-    if perform_astrometry:
-
-        # -----------------------------------------------------
-        # IMPORT ASTROMETRY FUNCTIONS
-        # -----------------------------------------------------
-
-        from steps_astrometry import (
-            select_astrometric_candidates,
-            solve_with_astrometry_net,
-            solve_with_astrometry_net_raw_upload,
-            review_astrometric_candidates,
-            create_manual_wcs
-        )
-
-        # -----------------------------------------------------
-        # REFERENCE IMAGE
-        # -----------------------------------------------------
 
         image_names = list(dict_images.keys())
 
@@ -409,9 +554,7 @@ def main():
         print("ASTROMETRY / WCS CALIBRATION")
         print("=================================================")
 
-        print(
-            f"Reference image: {reference_fname}"
-        )
+        print(f"Reference image: {reference_fname}")
 
         # -----------------------------------------------------
         # SOLVE EACH IMAGE
@@ -419,33 +562,22 @@ def main():
 
         for fname in image_names:
 
-            found_stars = dict_aper[fname][
+            found_stars = dict_aper[fname].get(
                 "sources found"
-            ]
-
-            image_data = dict_images[fname][
-                "data"
-            ].astype(float)
-
-            fwhm = dict_aper[fname].get(
-                "fwhm",
-                None
             )
+
+            image_data = dict_images[fname]["data"].astype(float)
+
+            fwhm = dict_aper[fname].get("fwhm")
 
             if found_stars is None or len(found_stars) == 0:
 
                 print(
-                    f"{fname}: no sources available "
-                    "for astrometry."
+                    f"{fname}: no sources available for astrometry."
                 )
 
-                dict_aper[fname][
-                    "astrometric_candidates"
-                ] = None
-
-                dict_aper[fname][
-                    "manual_wcs"
-                ] = None
+                dict_aper[fname]["astrometric_candidates"] = None
+                dict_aper[fname]["manual_wcs"] = None
 
                 continue
 
@@ -456,18 +588,13 @@ def main():
                     "skipping astrometry."
                 )
 
-                dict_aper[fname][
-                    "astrometric_candidates"
-                ] = None
-
-                dict_aper[fname][
-                    "manual_wcs"
-                ] = None
+                dict_aper[fname]["astrometric_candidates"] = None
+                dict_aper[fname]["manual_wcs"] = None
 
                 continue
 
             # -------------------------------------------------
-            # ASTROMETRIC CANDIDATES
+            # SELECT ASTROMETRIC CANDIDATES
             # -------------------------------------------------
 
             candidates = select_astrometric_candidates(
@@ -476,415 +603,118 @@ def main():
                 fwhm
             )
 
-            dict_aper[fname][
-                "astrometric_candidates"
-            ] = candidates
+            dict_aper[fname]["astrometric_candidates"] = candidates
 
             if candidates is None or len(candidates) == 0:
 
                 print(
-                    f"{fname}: no suitable astrometric "
-                    "candidates."
+                    f"{fname}: no suitable astrometric candidates."
                 )
 
-                dict_aper[fname][
-                    "manual_wcs"
-                ] = None
+                dict_aper[fname]["manual_wcs"] = None
 
                 continue
 
             # =================================================
-            # ASTROMETRY.NET
+            # METHOD 1: AUTOMATIC IMAGE UPLOAD
             # =================================================
+
+            wcs_solution = None
 
             if astrometry_settings["method"] == "astrometry_net":
 
-                # ---------------------------------------------
-                # FIRST TRY: SOURCE LIST
-                # ---------------------------------------------
+                print(
+                    f"{fname}: trying automatic image-upload astrometry..."
+                )
 
-                wcs_solution = solve_with_astrometry_net(
-                    sources=candidates,
-                    image_shape=image_data.shape,
+                wcs_solution = solve_with_astrometry_net_raw_upload(
+                    image_path=dict_images[fname]["path"],
                     api_key=astrometry_settings["api_key"],
                     scale_lower_arcmin=SCALE_LOWER_ARCMIN,
                     scale_upper_arcmin=SCALE_UPPER_ARCMIN
                 )
 
-                used_method = "source_list"
-
-                # ---------------------------------------------
-                # SECOND TRY: RAW IMAGE UPLOAD
-                # ---------------------------------------------
-
-                if wcs_solution is None:
-
-                    print(
-                        f"{fname}: source-list solve failed, "
-                        "trying image-upload solve instead..."
-                    )
-
-                    wcs_solution = (
-                        solve_with_astrometry_net_raw_upload(
-                            image_path=dict_images[fname]["path"],
-                            api_key=astrometry_settings["api_key"],
-                            scale_lower_arcmin=SCALE_LOWER_ARCMIN,
-                            scale_upper_arcmin=SCALE_UPPER_ARCMIN
-                        )
-                    )
-
-                    used_method = "image_upload"
-
-                # ---------------------------------------------
-                # STORE WCS RESULT
-                # ---------------------------------------------
-
-                dict_aper[fname][
-                    "manual_wcs"
-                ] = wcs_solution
-
                 if wcs_solution is not None:
 
-                    print(
-                        f"{fname}: astrometry.net WCS solved "
-                        f"successfully ({used_method} method)."
-                    )
+                    dict_aper[fname]["manual_wcs"] = wcs_solution
 
                     dict_aper[fname][
                         "astrometry_method_used"
-                    ] = used_method
-
-                else:
+                    ] = "image_upload"
 
                     print(
-                        f"{fname}: astrometry.net WCS solve failed "
-                        "(both source-list and image-upload methods)."
+                        f"{fname}: automatic image-upload "
+                        "astrometry succeeded."
                     )
-
-            # =================================================
-            # MANUAL ASTROMETRY
-            # =================================================
-
-            elif astrometry_settings["method"] == "manual":
-
-                if fname != reference_fname:
-
-                    print(
-                        f"{fname}: manual astrometry will use "
-                        "the reference-image workflow."
-                    )
-
-                reviewed_candidates = (
-                    review_astrometric_candidates(
-                        fname,
-                        dict_images[fname],
-                        candidates
-                    )
-                )
-
-                if (
-                    reviewed_candidates is None
-                    or len(reviewed_candidates) == 0
-                ):
-
-                    print(
-                        f"{fname}: no reviewed candidates "
-                        "available for manual WCS."
-                    )
-
-                    dict_aper[fname][
-                        "manual_wcs"
-                    ] = None
 
                     continue
 
-                wcs_solution = create_manual_wcs(
-                    fname,
-                    dict_images[fname],
-                    reviewed_candidates
+                print(
+                    f"{fname}: automatic astrometry failed; "
+                    "trying manual astrometry..."
                 )
+
+            # =================================================
+            # METHOD 2: MANUAL ASTROMETRY
+            # =================================================
+
+            elif astrometry_settings["method"] != "manual":
+
+                print(
+                    f"{fname}: unsupported astrometry method: "
+                    f"{astrometry_settings['method']}"
+                )
+
+                dict_aper[fname]["manual_wcs"] = None
+
+                continue
+
+
+                reviewed_candidates = review_astrometric_candidates(
+                    found_stars=dict_aper[fname]["sources found"],
+                    image_data=dict_images[fname]["clean_data"],
+                    fwhm=dict_aper[fname]["fwhm"]
+                )
+
+
+            if (
+                reviewed_candidates is None
+                or len(reviewed_candidates) == 0
+            ):
+
+                print(
+                    f"{fname}: no reviewed candidates available "
+                    "for manual WCS."
+                )
+
+                dict_aper[fname]["manual_wcs"] = None
+
+                continue
+
+            wcs_solution = create_manual_wcs(
+                fname,
+                dict_images[fname],
+                reviewed_candidates
+            )
+
+            dict_aper[fname]["manual_wcs"] = wcs_solution
+
+            if wcs_solution is not None:
 
                 dict_aper[fname][
-                    "manual_wcs"
-                ] = wcs_solution
-
-                if wcs_solution is not None:
-
-                    print(
-                        f"{fname}: manual WCS solution "
-                        "created successfully."
-                    )
-
-                    dict_aper[fname][
-                        "astrometry_method_used"
-                    ] = "manual"
-
-                else:
-
-                    print(
-                        f"{fname}: manual WCS solution failed."
-                    )
-
-    # =========================================================
-    # AUTOMATIC ASTROMETRY FALLBACK
-    # =========================================================
-
-    if (
-        perform_astrometry
-        and astrometry_settings["method"] == "astrometry_net"
-    ):
-
-        image_names = list(dict_images.keys())
-
-        all_failed = all(
-            dict_aper[fname].get("manual_wcs") is None
-            for fname in image_names
-        )
-
-        if all_failed:
-
-            print()
-            print("=================================================")
-            print("ASTROMETRY FALLBACK")
-            print("=================================================")
-
-            print(
-                "All initial astrometry.net solves failed."
-            )
-
-            # -------------------------------------------------
-            # TRY POSITION-HINT RETRY
-            # -------------------------------------------------
-
-            from steps_astrometry import (
-                solve_with_astrometry_net_position_hint
-            )
-
-            position_hint_solutions = {}
-
-            for fname in image_names:
+                    "astrometry_method_used"
+                ] = "manual"
 
                 print(
-                    f"{fname}: trying position-hint retry..."
+                    f"{fname}: manual WCS created successfully."
                 )
 
-                candidates = dict_aper[fname].get(
-                    "astrometric_candidates"
-                )
-
-                if candidates is None:
-                    continue
-
-                wcs_solution = (
-                    solve_with_astrometry_net_position_hint(
-                        sources=candidates,
-                        image_shape=dict_images[fname][
-                            "data"
-                        ].shape,
-                        api_key=astrometry_settings["api_key"],
-                        scale_lower_arcmin=SCALE_LOWER_ARCMIN,
-                        scale_upper_arcmin=SCALE_UPPER_ARCMIN
-                    )
-                )
-
-                if wcs_solution is not None:
-
-                    position_hint_solutions[fname] = (
-                        wcs_solution
-                    )
-
-                    dict_aper[fname][
-                        "manual_wcs"
-                    ] = wcs_solution
-
-                    dict_aper[fname][
-                        "astrometry_method_used"
-                    ] = "position_hint"
-
-                    print(
-                        f"{fname}: position-hint solve succeeded."
-                    )
-
-            all_failed = all(
-                dict_aper[fname].get("manual_wcs") is None
-                for fname in image_names
-            )
-
-            # -------------------------------------------------
-            # MANUAL REFERENCE FALLBACK
-            # -------------------------------------------------
-
-            if all_failed:
+            else:
 
                 print(
-                    "Position-hint retry did not produce a "
-                    "complete astrometric solution."
+                    f"{fname}: manual astrometry failed."
                 )
 
-                print(
-                    "Falling back to manual solution for "
-                    "the reference image."
-                )
-
-                reference_candidates = dict_aper[
-                    reference_fname
-                ].get("astrometric_candidates")
-
-                if (
-                    reference_candidates is not None
-                    and len(reference_candidates) > 0
-                ):
-
-                    from steps_astrometry import (
-                        review_astrometric_candidates,
-                        create_manual_wcs
-                    )
-
-                    reviewed_candidates = (
-                        review_astrometric_candidates(
-                            reference_fname,
-                            dict_images[reference_fname],
-                            reference_candidates
-                        )
-                    )
-
-                    if (
-                        reviewed_candidates is not None
-                        and len(reviewed_candidates) > 0
-                    ):
-
-                        reference_wcs = create_manual_wcs(
-                            reference_fname,
-                            dict_images[reference_fname],
-                            reviewed_candidates
-                        )
-
-                        if reference_wcs is not None:
-
-                            dict_aper[
-                                reference_fname
-                            ]["manual_wcs"] = reference_wcs
-
-                            dict_aper[
-                                reference_fname
-                            ]["astrometry_method_used"] = (
-                                "manual_reference"
-                            )
-
-                            print(
-                                f"{reference_fname}: manual "
-                                "reference WCS succeeded."
-                            )
-
-                            # ---------------------------------
-                            # USE REFERENCE CENTER AS HINT
-                            # ---------------------------------
-
-                            reference_data = dict_images[
-                                reference_fname
-                            ]["data"]
-
-                            ref_y, ref_x = (
-                                np.asarray(
-                                    reference_data.shape
-                                )[:2] / 2.0
-                            )
-
-                            reference_sky = (
-                                reference_wcs.pixel_to_world(
-                                    ref_x,
-                                    ref_y
-                                )
-                            )
-
-                            hint_ra = reference_sky.ra.deg
-                            hint_dec = reference_sky.dec.deg
-
-                            print(
-                                f"Reference center: "
-                                f"RA={hint_ra:.6f}, "
-                                f"Dec={hint_dec:.6f}"
-                            )
-
-                            # -----------------------------
-                            # SOLVE REMAINING IMAGES
-                            # -----------------------------
-
-                            for fname in image_names:
-
-                                if (
-                                    fname
-                                    == reference_fname
-                                ):
-                                    continue
-
-                                if (
-                                    dict_aper[fname].get(
-                                        "manual_wcs"
-                                    )
-                                    is not None
-                                ):
-                                    continue
-
-                                candidates = (
-                                    dict_aper[fname].get(
-                                        "astrometric_candidates"
-                                    )
-                                )
-
-                                if (
-                                    candidates is None
-                                    or len(candidates) == 0
-                                ):
-                                    continue
-
-                                from steps_astrometry import (
-                                    solve_with_astrometry_net_position_hint
-                                )
-
-                                print(
-                                    f"{fname}: solving using "
-                                    "manual reference center..."
-                                )
-
-                                wcs_solution = (
-                                    solve_with_astrometry_net_position_hint(
-                                        sources=candidates,
-                                        image_shape=dict_images[
-                                            fname
-                                        ]["data"].shape,
-                                        api_key=(
-                                            astrometry_settings[
-                                                "api_key"
-                                            ]
-                                        ),
-                                        scale_lower_arcmin=(
-                                            SCALE_LOWER_ARCMIN
-                                        ),
-                                        scale_upper_arcmin=(
-                                            SCALE_UPPER_ARCMIN
-                                        ),
-                                        ra_hint=hint_ra,
-                                        dec_hint=hint_dec
-                                    )
-                                )
-
-                                if wcs_solution is not None:
-
-                                    dict_aper[fname][
-                                        "manual_wcs"
-                                    ] = wcs_solution
-
-                                    dict_aper[fname][
-                                        "astrometry_method_used"
-                                    ] = (
-                                        "reference_position_hint"
-                                    )
-
-                                    print(
-                                        f"{fname}: reference-hint "
-                                        "solve succeeded."
-                                    )
 
     # =========================================================
     # SOURCE COUNT
@@ -892,14 +722,22 @@ def main():
 
     image_names = list(dict_images.keys())
 
-    reference_sources = dict_aper[
-        image_names[0]
-    ].get("sources found")
+    if len(image_names) == 0:
 
-    if reference_sources is not None:
-        source_count = len(reference_sources)
-    else:
         source_count = 0
+
+        print("No images available for source counting.")
+
+    else:
+
+        reference_sources = dict_aper[
+            image_names[0]
+        ].get("sources found")
+
+        if reference_sources is not None:
+            source_count = len(reference_sources)
+        else:
+            source_count = 0
 
     print()
     print(
@@ -1242,44 +1080,62 @@ def main():
             photsys="PS1"
         )
 
+
     # =========================================================
     # DISPLAY FINAL TABLES
     # =========================================================
-
+    
     print()
     print("=================================================")
     print("FINAL PHOTOMETRY TABLES")
     print("=================================================")
-
+    
     for fname in image_names:
-
+    
         calibrated_table = dict_aper[fname].get(
             "calibrated_phot_table",
             None
         )
-
+    
         if calibrated_table is not None:
-
-            print()
-            print(fname)
-            print(calibrated_table)
-
+            table = calibrated_table
         else:
-
             table = dict_aper[fname].get(
                 "final_aperture_phot_table",
                 None
             )
-
-            if table is not None:
-
-                print()
-                print(
-                    f"{fname} "
-                    "(instrumental / uncalibrated):"
-                )
-
-                print(table)
+    
+        if table is not None:
+            print()
+            print(fname)
+    
+            display_table = table.copy()
+    
+            if "RA" in display_table.colnames and "Dec" in display_table.colnames:
+                from astropy.coordinates import Angle
+                import astropy.units as u
+    
+                display_table["RA"] = [
+                    Angle(value, unit=u.deg).to_string(
+                        unit=u.hourangle,
+                        sep=":",
+                        precision=2,
+                        pad=True
+                    )
+                    for value in table["RA"]
+                ]
+    
+                display_table["Dec"] = [
+                    Angle(value, unit=u.deg).to_string(
+                        sep=":",
+                        precision=2,
+                        pad=True,
+                        alwayssign=True
+                    )
+                    for value in table["Dec"]
+                ]
+    
+            print(display_table)
 
     # =========================================================
     # FINAL SUMMARY
