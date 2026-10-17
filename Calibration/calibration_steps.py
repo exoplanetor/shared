@@ -56,7 +56,7 @@ def fix_headers(main_path):
         with fits.open(file, mode="update") as hdul:
             hdr = hdul[0].header
 
-            hdr.setdefault("OBSTYPE", obstype)
+            hdr["OBSTYPE"] = obstype
             hdr.setdefault("BUNIT", "adu")
 
             if filter_value and "FILTER" not in hdr:
