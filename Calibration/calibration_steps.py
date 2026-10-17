@@ -114,12 +114,16 @@ def show_scrollable_figure(fig, title="FITS Preview"):
     plt.close(fig)
 
 
+
 def preview_frames(images_dir, ask_yes_no):
 
-    images = sorted(glob.glob(os.path.join(images_dir, "*.fits")))
+    images = sorted(
+        glob.glob(os.path.join(images_dir, "*.fit"))
+        + glob.glob(os.path.join(images_dir, "*.fits"))
+    )
 
     if len(images) == 0:
-        print("No FITS files found")
+        print(f"No FITS files found in: {images_dir}")
         return False
 
     groups = {"BIAS": [], "DARK": [], "FLAT": [], "OBJECT": []}
@@ -130,8 +134,8 @@ def preview_frames(images_dir, ask_yes_no):
                 t = hdul[0].header.get("OBSTYPE", "").strip().upper()
                 if t in groups:
                     groups[t].append(f)
-        except:
-            pass
+        except Exception as e:
+            print(f"Could not read {os.path.basename(f)}: {e}")
 
     for obstype, files in groups.items():
 
@@ -147,38 +151,51 @@ def preview_frames(images_dir, ask_yes_no):
         fig = plt.figure(figsize=(18, 6 * rows))
         fig.suptitle(obstype)
 
-        plt.subplots_adjust(left=0.05, right=0.95, bottom=0.05, top=0.92,
-                            wspace=0.4, hspace=0.5)
+        plt.subplots_adjust(
+            left=0.05, right=0.95, bottom=0.05, top=0.92,
+            wspace=0.4, hspace=0.5
+        )
 
         for i, f in enumerate(files):
 
-            with fits.open(f) as hdul:
-                d = hdul[0].data
-                h = hdul[0].header
-                d = h.get("BSCALE", 1.0) * d + h.get("BZERO", 0.0)
-                d = np.nan_to_num(d)
+            try:
+                with fits.open(f) as hdul:
+                    d = hdul[0].data
+                    h = hdul[0].header
 
-            ax = plt.subplot(rows, cols, i + 1)
-            ax.set_title(os.path.basename(f)[:25], fontsize=9)
-            ax.set_xticks([])
-            ax.set_yticks([])
+                    if d is None or d.ndim != 2:
+                        print(f"Skipping non-2D image: {os.path.basename(f)}")
+                        continue
 
-            norm = simple_norm(
-                d,
-                "sqrt",
-                percent=99,
-                vmin=np.percentile(d, 5),
-                vmax=np.percentile(d, 95),
-            )
+                    d = h.get("BSCALE", 1.0) * d + h.get("BZERO", 0.0)
+                    d = np.nan_to_num(d)
 
-            ax.imshow(d, norm=norm, cmap="Greys")
+                ax = plt.subplot(rows, cols, i + 1)
+                ax.set_title(os.path.basename(f)[:25], fontsize=9)
+                ax.set_xticks([])
+                ax.set_yticks([])
 
-            gc.collect()
+                norm = simple_norm(
+                    d,
+                    "sqrt",
+                    percent=99,
+                    vmin=np.percentile(d, 5),
+                    vmax=np.percentile(d, 95),
+                )
+
+                ax.imshow(d, norm=norm, cmap="Greys")
+
+            except Exception as e:
+                print(f"Could not display {os.path.basename(f)}: {e}")
+
+            finally:
+                gc.collect()
 
         show_scrollable_figure(fig, obstype)
 
     print("Done frame inspection")
     return True
+
 # -----------------------------
 # Hot pixel mask builder
 # -----------------------------
