@@ -721,15 +721,13 @@ from photutils.utils import circular_footprint
 from astropy.stats import SigmaClip
 import numpy as np
 
+
 def build_background_library(outputs):
 
     sigma_clip = SigmaClip(sigma=3.0, maxiters=10)
     footprint_radius = 15
     min_pixels = 10
 
-    ny, nx = data.shape
-    box_size = (ny // 20, nx // 20)
-    filter_size = (3, 3)
     bkg_estimator = MedianBackground()
 
     plot_order = [
@@ -758,8 +756,19 @@ def build_background_library(outputs):
 
         data = outputs[name].data
 
-        threshold = detect_threshold(data, nsigma=3, sigma_clip=sigma_clip)
-        segment_img = detect_sources(data, threshold, npixels=min_pixels)
+        # Calculate box size for this image
+        ny, nx = data.shape
+        box_size = (
+            max(1, ny // 20),
+            max(1, nx // 20)
+        )
+
+        threshold = detect_threshold(
+            data, nsigma=3, sigma_clip=sigma_clip
+        )
+        segment_img = detect_sources(
+            data, threshold, npixels=min_pixels
+        )
 
         if segment_img is not None:
             footprint = circular_footprint(radius=footprint_radius)
@@ -772,7 +781,7 @@ def build_background_library(outputs):
         bkg = Background2D(
             data,
             box_size=box_size,
-            filter_size=filter_size,
+            filter_size=(3, 3),
             mask=mask,
             sigma_clip=sigma_clip,
             bkg_estimator=bkg_estimator
