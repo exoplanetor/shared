@@ -1127,108 +1127,108 @@ def run_calibration_pipeline(main_path, selected_mode="1", use_bias=True):
         ).strip().lower() == "y"
     )
 
-# =========================================================
-# STEP 8 — APPLY TO ALL FRAMES
-# =========================================================
-for frame in light_frames:
-
-    raw = CCDData.read(frame, unit=u.adu)
-
-    mask_hdu = fits.open(frame)['MASK'].data
-    raw.mask = mask_hdu.astype(bool)
-
-    filt = raw.header.get("FILTER")
-
-    if filt is None:
-        raise ValueError(f"No FILTER keyword in {frame}")
-
-    if filt not in combined_flats:
-        raise ValueError(
-            f"No dark-corrected flat for FILTER={filt}"
-        )
-
-    if filt not in combined_flats_raw:
-        raise ValueError(
-            f"No raw flat for FILTER={filt}"
-        )
-
-    exp = raw.header.get('EXPTIME') or raw.header.get('EXPOSURE')
-
-    if exp is None:
-        raise ValueError(f"No exposure keyword in {frame}")
-
-    minus_dark = ccdp.subtract_dark(
-        raw,
-        master_dark,
-        dark_exposure=float(master_dark.header['EXPTIME']) * u.second,
-        data_exposure=float(exp) * u.second,
-        exposure_unit=u.second
-    )
-
-    # -----------------------------
-    # FLAT SELECTION (FILTER-SAFE)
-    # -----------------------------
-    if selected_mode == "minus_dark_div_flat":
-
-        final = ccdp.flat_correct(
-            minus_dark,
-            combined_flats[filt]
-        )
-
-    elif selected_mode == "minus_dark_div_non-dark-reduced_flat":
-
-        final = ccdp.flat_correct(
-            minus_dark,
-            combined_flats_raw[filt]
-        )
-
-    else:
-
-        final = ccdp.flat_correct(
+    # =========================================================
+    # STEP 8 — APPLY TO ALL FRAMES
+    # =========================================================
+    for frame in light_frames:
+    
+        raw = CCDData.read(frame, unit=u.adu)
+    
+        mask_hdu = fits.open(frame)['MASK'].data
+        raw.mask = mask_hdu.astype(bool)
+    
+        filt = raw.header.get("FILTER")
+    
+        if filt is None:
+            raise ValueError(f"No FILTER keyword in {frame}")
+    
+        if filt not in combined_flats:
+            raise ValueError(
+                f"No dark-corrected flat for FILTER={filt}"
+            )
+    
+        if filt not in combined_flats_raw:
+            raise ValueError(
+                f"No raw flat for FILTER={filt}"
+            )
+    
+        exp = raw.header.get('EXPTIME') or raw.header.get('EXPOSURE')
+    
+        if exp is None:
+            raise ValueError(f"No exposure keyword in {frame}")
+    
+        minus_dark = ccdp.subtract_dark(
             raw,
-            combined_flats_raw[filt]
+            master_dark,
+            dark_exposure=float(master_dark.header['EXPTIME']) * u.second,
+            data_exposure=float(exp) * u.second,
+            exposure_unit=u.second
         )
-
-    data = final.data
-
-    if apply_bg:
-
-        threshold = detect_threshold(data, nsigma=3)
-
-        segment_img = detect_sources(data, threshold, npixels=10)
-
-        mask = segment_img.make_source_mask() if segment_img else None
-
-        bkg = Background2D(
+    
+        # -----------------------------
+        # FLAT SELECTION (FILTER-SAFE)
+        # -----------------------------
+        if selected_mode == "minus_dark_div_flat":
+    
+            final = ccdp.flat_correct(
+                minus_dark,
+                combined_flats[filt]
+            )
+    
+        elif selected_mode == "minus_dark_div_non-dark-reduced_flat":
+    
+            final = ccdp.flat_correct(
+                minus_dark,
+                combined_flats_raw[filt]
+            )
+    
+        else:
+    
+            final = ccdp.flat_correct(
+                raw,
+                combined_flats_raw[filt]
+            )
+    
+        data = final.data
+    
+        if apply_bg:
+    
+            threshold = detect_threshold(data, nsigma=3)
+    
+            segment_img = detect_sources(data, threshold, npixels=10)
+    
+            mask = segment_img.make_source_mask() if segment_img else None
+    
+            bkg = Background2D(
+                data,
+                (50, 50),
+                mask=mask,
+                bkg_estimator=MedianBackground()
+            )
+    
+            data = data - bkg.background
+    
+        final_ccd = CCDData(
             data,
-            (50, 50),
-            mask=mask,
-            bkg_estimator=MedianBackground()
+            header=final.header,
+            unit=final.unit
         )
-
-        data = data - bkg.background
-
-    final_ccd = CCDData(
-        data,
-        header=final.header,
-        unit=final.unit
-    )
-
-    suffix = "_bg" if apply_bg else ""
-
-    output_name = (
-        f"{Path(frame).stem}_"
-        f"{selected_mode}"
-        f"{suffix}_final.fits"
-    )
-
-    final_ccd.write(
-        calibrated_path / output_name,
-        overwrite=True
-    )
-
-    print(f"Saved: {output_name}")
-
-print("\nPipeline complete.\n")
-
-return combined_flats, combined_flats_raw
+    
+        suffix = "_bg" if apply_bg else ""
+    
+        output_name = (
+            f"{Path(frame).stem}_"
+            f"{selected_mode}"
+            f"{suffix}_final.fits"
+        )
+    
+        final_ccd.write(
+            calibrated_path / output_name,
+            overwrite=True
+        )
+    
+        print(f"Saved: {output_name}")
+    
+    print("\nPipeline complete.\n")
+    
+    return combined_flats, combined_flats_raw
