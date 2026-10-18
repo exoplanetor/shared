@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------#
-# Developed by Leila Sadeghi Ardestani. Last updated 10/17/2026  #
+# Developed by Leila Sadeghi Ardestani. Last updated 10/18/2026  #
 # In case of Inquiries please contact the following email        #
 # email address :lsadeghi@ipm.ir                                 #
 # github = https://github.com/exoplanetor                        #
@@ -21,7 +21,7 @@ from calibration_steps import (
     build_background_library,
     plot_pipeline_qc
 )
-
+from pathlib import Path
 
 def ask_yes_no(question):
     while True:
@@ -35,6 +35,14 @@ def ask_yes_no(question):
 
 def main():
     folder = input("Enter the folder path with your data: ").strip()
+    
+    folder_path = Path(folder)    
+    if not folder_path.exists():
+        print(f"ERROR: Folder does not exist:\n{folder}")
+        return    
+    if not folder_path.is_dir():
+        print(f"ERROR: The path is not a folder:\n{folder}")
+        return
     print("You entered:", folder)
 
     # Step 1: Fix headers
@@ -49,10 +57,25 @@ def main():
     
     # Step 3: Hot pixel mask
     if ask_yes_no("Do you want to build hot pixel mask?"):
-        print("Running build_hot_pixel_mask...")
-        build_hot_pixel_mask(folder)
-        print("Done building hot pixel mask.")
-
+    
+        print("\n-------------------------------------------")
+        print("HOT PIXEL MASK REQUIREMENTS")
+        print("-------------------------------------------")
+        print("Before continuing, make sure that:")
+        print("1. You have exactly TWO dark frames prepared.")
+        print("2. Both dark frames have OBSTYPE = DARK in their FITS headers.")
+        print("3. The dark frames are located inside the 'mask' folder:")
+        print(f"   {folder}\\mask")
+        print("4. The two dark frames should have different exposure times")
+        print("   (one short exposure and one long exposure).")
+        print("-------------------------------------------\n")
+    
+        if ask_yes_no("Are these requirements satisfied?"):
+            print("Running build_hot_pixel_mask...")
+            build_hot_pixel_mask(folder)
+            print("Done building hot pixel mask.")
+        else:
+            print("Skipping hot pixel mask creation.")
     # Step 4: Apply hot pixel mask
     if ask_yes_no("Do you want to apply hot pixel mask?"):
         print("Running apply_hot_pixel_mask...")
