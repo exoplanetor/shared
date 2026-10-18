@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------#
-# Developed by Leila Sadeghi Ardestani. Last updated 10/17/2026  #
+# Developed by Leila Sadeghi Ardestani. Last updated 10/18/2026  #
 # In case of Inquiries please contact the following email        #
 # email address :lsadeghi@ipm.ir                                 #
 # github = https://github.com/exoplanetor                        #
@@ -12,8 +12,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from astropy.nddata import CCDData
 from astropy import units as u
-
-
+import os
+import glob
+import gc
+import tkinter as tk
+from astropy.visualization import simple_norm
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 # -----------------------------
 # Filter detection
 # -----------------------------
@@ -56,7 +60,7 @@ def fix_headers(main_path):
         with fits.open(file, mode="update") as hdul:
             hdr = hdul[0].header
 
-            hdr["OBSTYPE"] = obstype
+            hdr.setdefault("OBSTYPE", obstype)
             hdr.setdefault("BUNIT", "adu")
 
             if filter_value and "FILTER" not in hdr:
@@ -114,16 +118,51 @@ def show_scrollable_figure(fig, title="FITS Preview"):
     plt.close(fig)
 
 
+def show_scrollable_figure(fig, title="FITS Preview"):
+
+    root = tk.Tk()
+    root.title(title)
+
+    canvas = tk.Canvas(root)
+    vbar = tk.Scrollbar(root, orient="vertical", command=canvas.yview)
+    hbar = tk.Scrollbar(root, orient="horizontal", command=canvas.xview)
+
+    canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
+
+    vbar.pack(side="right", fill="y")
+    hbar.pack(side="bottom", fill="x")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    frame = tk.Frame(canvas)
+    canvas.create_window((0, 0), window=frame, anchor="nw")
+
+    mpl = FigureCanvasTkAgg(fig, master=frame)
+    mpl.draw()
+    mpl.get_tk_widget().pack()
+
+    frame.update_idletasks()
+    canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def close():
+        plt.close(fig)
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", close)
+    root.mainloop()
+
+    plt.close(fig)
+
 
 def preview_frames(images_dir, ask_yes_no):
 
     images = sorted(
-        glob.glob(os.path.join(images_dir, "*.fit"))
-        + glob.glob(os.path.join(images_dir, "*.fits"))
+        str(f)
+        for f in Path(images_dir).rglob("*")
+        if f.suffix.lower() in [".fit", ".fits"]
     )
 
     if len(images) == 0:
-        print(f"No FITS files found in: {images_dir}")
+        print("No FITS files found")
         return False
 
     groups = {"BIAS": [], "DARK": [], "FLAT": [], "OBJECT": []}
@@ -134,8 +173,8 @@ def preview_frames(images_dir, ask_yes_no):
                 t = hdul[0].header.get("OBSTYPE", "").strip().upper()
                 if t in groups:
                     groups[t].append(f)
-        except Exception as e:
-            print(f"Could not read {os.path.basename(f)}: {e}")
+        except:
+            pass
 
     for obstype, files in groups.items():
 
@@ -151,51 +190,58 @@ def preview_frames(images_dir, ask_yes_no):
         fig = plt.figure(figsize=(18, 6 * rows))
         fig.suptitle(obstype)
 
-        plt.subplots_adjust(
-            left=0.05, right=0.95, bottom=0.05, top=0.92,
-            wspace=0.4, hspace=0.5
-        )
+        plt.subplots_adjust(left=0.05, right=0.95, bottom=0.05, top=0.92,
+                            wspace=0.4, hspace=0.5)
 
         for i, f in enumerate(files):
 
-            try:
-                with fits.open(f) as hdul:
-                    d = hdul[0].data
-                    h = hdul[0].header
+            with fits.open(f) as hdul:
+                d = hdul[0].data
+                h = hdul[0].header
+                d = h.get("BSCALE", 1.0) * d + h.get("BZERO", 0.0)
+                d = np.nan_to_num(d)
 
-                    if d is None or d.ndim != 2:
-                        print(f"Skipping non-2D image: {os.path.basename(f)}")
-                        continue
+            ax = plt.subplot(rows, cols, i + 1)
+            
+            # --- Custom Filename & Exposure Formatting ---
+            name = os.path.basename(f)
+            
+            exp_str = ""
+            match = re.search(r'exp(\d{2})\.(\d{2})\.(\d{2})\.(\d{3})', name, re.IGNORECASE)
+            if match:
+                h_val, m_val, s_val, ms_val = map(int, match.groups())
+                total_seconds = h_val * 3600 + m_val * 60 + s_val + (ms_val / 1000.0)
+                if total_seconds.is_integer():
+                    exp_str = f"[{int(total_seconds)}sec]"
+                else:
+                    exp_str = f"[{total_seconds}sec]"
 
-                    d = h.get("BSCALE", 1.0) * d + h.get("BZERO", 0.0)
-                    d = np.nan_to_num(d)
+            if len(name) > 27:
+                display_name = f"{name[:12]}... {exp_str} {name[-12:]}"
+            else:
+                display_name = f"{name} {exp_str}" if exp_str else name
+            # ---------------------------------------------
 
-                ax = plt.subplot(rows, cols, i + 1)
-                ax.set_title(os.path.basename(f)[:25], fontsize=9)
-                ax.set_xticks([])
-                ax.set_yticks([])
+            ax.set_title(display_name, fontsize=9)
+            ax.set_xticks([])
+            ax.set_yticks([])
 
-                norm = simple_norm(
-                    d,
-                    "sqrt",
-                    percent=99,
-                    vmin=np.percentile(d, 5),
-                    vmax=np.percentile(d, 95),
-                )
+            norm = simple_norm(
+                d,
+                "sqrt",
+                percent=99,
+                vmin=np.percentile(d, 5),
+                vmax=np.percentile(d, 95),
+            )
 
-                ax.imshow(d, norm=norm, cmap="Greys")
+            ax.imshow(d, norm=norm, cmap="Greys")
 
-            except Exception as e:
-                print(f"Could not display {os.path.basename(f)}: {e}")
-
-            finally:
-                gc.collect()
+            gc.collect()
 
         show_scrollable_figure(fig, obstype)
 
     print("Done frame inspection")
     return True
-
 # -----------------------------
 # Hot pixel mask builder
 # -----------------------------
@@ -203,27 +249,36 @@ def build_hot_pixel_mask(main_path):
 
     main_path = Path(main_path)
     mask_path = main_path / "mask"
-
     mask_path.mkdir(exist_ok=True)
 
-    dark_files = list(mask_path.glob("*.fit")) + list(mask_path.glob("*.fits"))
+    # Find all DARK frames by header
+    dark_files = []
 
-    if len(dark_files) < 2:
-        print(f"\nFound {len(dark_files)} dark frame(s).")
-        print("Please place EXACTLY TWO dark frames in the mask folder.")
+    for f in mask_path.rglob("*"):
+        if f.suffix.lower() not in [".fit", ".fits"]:
+            continue
 
-        input("Press ENTER when ready...")
+        try:
+            hdr = fits.getheader(f)
+            if hdr.get("OBSTYPE", "").strip().upper() == "DARK":
+                dark_files.append(f)
+        except Exception:
+            continue
 
-        dark_files = list(mask_path.glob("*.fit")) + list(mask_path.glob("*.fits"))
+    if len(dark_files) != 2:
+        print("\nDark frames found:")
+        for f in dark_files:
+            print(" ", f.name)
 
-        if len(dark_files) != 2:
-            raise RuntimeError(
-                f"Expected exactly 2 dark frames, found {len(dark_files)}"
-            )
+        raise RuntimeError(
+            f"Expected exactly 2 DARK frames, found {len(dark_files)}."
+        )
 
-    dark_files = sorted(dark_files)
+    # Sort by exposure time
+    dark_files.sort(key=lambda f: fits.getheader(f).get("EXPTIME", 0))
 
-    dark_short_file, dark_long_file = dark_files
+    dark_short_file = dark_files[0]
+    dark_long_file = dark_files[1]
 
     print("\nUsing:")
     print(f"  Dark_Short: {dark_short_file.name}")
@@ -513,6 +568,9 @@ def make_master_bias(path, combined_path, combined_bias_name):
 # -----------------------------
 # Create Master Dark choosing whether or not to include Bias subtraction
 # -----------------------------
+# -----------------------------
+# Create Master Dark choosing whether or not to include Bias subtraction
+# -----------------------------
 def make_master_dark(path, combined_path, combined_dark_name, master_bias=None, use_bias=False):
 
     combined_dark_file = combined_path / combined_dark_name
@@ -530,16 +588,23 @@ def make_master_dark(path, combined_path, combined_dark_name, master_bias=None, 
     dark_list = []
 
     for f in all_darks:
+
         ccd = CCDData.read(f, unit='adu')
 
         # -----------------------------
         # OPTIONAL BIAS SUBTRACTION
         # -----------------------------
         if use_bias:
-            if master_bias is None:
-                raise ValueError("use_bias=True but no master_bias provided")
 
-            ccd = ccdp.subtract_bias(ccd, master_bias)
+            if master_bias is None:
+                raise ValueError(
+                    "use_bias=True but no master_bias provided"
+                )
+
+            ccd = ccdp.subtract_bias(
+                ccd,
+                master_bias
+            )
 
         dark_list.append(ccd)
 
@@ -557,18 +622,27 @@ def make_master_dark(path, combined_path, combined_dark_name, master_bias=None, 
         mem_limit=350e6
     )
 
-    # -----------------------------
-    # METADATA
-    # -----------------------------
     combined_dark.meta['combined'] = True
     combined_dark.meta['bias_subtracted'] = use_bias
 
-    combined_dark.write(combined_dark_file, overwrite=True)
+    combined_dark.write(
+        combined_dark_file,
+        overwrite=True
+    )
 
     print(f"Master dark saved: {combined_dark_file}")
 
     return combined_dark
 
+
+# -----------------------------
+# Normalization helper
+# -----------------------------
+def inv_median(ccd):
+
+    med = np.nanmedian(ccd.data)
+
+    return 1.0 / med if med != 0 else 1.0
 # -----------------------------
 # Apply darks on Flats
 # -----------------------------
@@ -738,14 +812,11 @@ from photutils.utils import circular_footprint
 from astropy.stats import SigmaClip
 import numpy as np
 
-
 def build_background_library(outputs):
 
     sigma_clip = SigmaClip(sigma=3.0, maxiters=10)
     footprint_radius = 15
     min_pixels = 10
-
-    bkg_estimator = MedianBackground()
 
     plot_order = [
         'raw',
@@ -772,31 +843,33 @@ def build_background_library(outputs):
             continue
 
         data = outputs[name].data
-        print(
-            f"DEBUG {name}: shape={data.shape}, "
-            f"finite={np.isfinite(data).sum()}/{data.size}, "
-            f"min={np.nanmin(data) if np.isfinite(data).any() else 'none'}, "
-            f"max={np.nanmax(data) if np.isfinite(data).any() else 'none'}"
-        )
 
-        
-        # Calculate box size for this image
         ny, nx = data.shape
         box_size = (
-            max(1, ny // 20),
-            max(1, nx // 20)
+            max(10, ny // 20),
+            max(10, nx // 20)
         )
 
+        filter_size = (3, 3)
+        bkg_estimator = MedianBackground()
+
         threshold = detect_threshold(
-            data, nsigma=3, sigma_clip=sigma_clip
+            data,
+            nsigma=3,
+            sigma_clip=sigma_clip
         )
+
         segment_img = detect_sources(
-            data, threshold, npixels=min_pixels
+            data,
+            threshold,
+            npixels=min_pixels
         )
 
         if segment_img is not None:
             footprint = circular_footprint(radius=footprint_radius)
-            mask = segment_img.make_source_mask(footprint=footprint)
+            mask = segment_img.make_source_mask(
+                footprint=footprint
+            )
         else:
             mask = np.zeros_like(data, dtype=bool)
 
@@ -805,7 +878,7 @@ def build_background_library(outputs):
         bkg = Background2D(
             data,
             box_size=box_size,
-            filter_size=(3, 3),
+            filter_size=filter_size,
             mask=mask,
             sigma_clip=sigma_clip,
             bkg_estimator=bkg_estimator
@@ -821,8 +894,14 @@ def build_background_library(outputs):
 
     df = pd.DataFrame(bgk_table)
 
-    return masks_dict, backgrounds_dict, bgks_dict, bg_subtracted_dict, df, plot_order
-
+    return (
+        masks_dict,
+        backgrounds_dict,
+        bgks_dict,
+        bg_subtracted_dict,
+        df,
+        plot_order,
+    )
 
 
 def plot_pipeline_qc(outputs, backgrounds_dict, bgks_dict, bg_subtracted_dict, plot_order, title_prefix="QC Check"):
