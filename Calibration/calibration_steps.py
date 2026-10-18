@@ -772,7 +772,14 @@ def build_background_library(outputs):
             continue
 
         data = outputs[name].data
+        print(
+            f"DEBUG {name}: shape={data.shape}, "
+            f"finite={np.isfinite(data).sum()}/{data.size}, "
+            f"min={np.nanmin(data) if np.isfinite(data).any() else 'none'}, "
+            f"max={np.nanmax(data) if np.isfinite(data).any() else 'none'}"
+        )
 
+        
         # Calculate box size for this image
         ny, nx = data.shape
         box_size = (
