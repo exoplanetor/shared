@@ -623,37 +623,43 @@ def main():
             # Manual astrometry is used when the user selected it, or when
             # the automatic astrometry.net solve failed. Review the candidates
             # here (not inside the unsupported-method branch).
+            # Use the same image array used for the initial candidate
+            # selection, so the candidate coordinates are checked against
+            # the correct image dimensions.
             reviewed_candidates = review_astrometric_candidates(
                 found_stars=found_stars,
-                image_data=clean_image_data,
+                image_data=image_data,
                 fwhm=fwhm,
             )
-
+            
             if reviewed_candidates is None or len(reviewed_candidates) == 0:
-                print(f"{fname}: no reviewed candidates available for manual WCS.")
+                print(
+                    f"{fname}: no reviewed candidates available "
+                    "for manual WCS."
+                )
                 dict_aper[fname]["astrometric_candidates"] = None
                 dict_aper[fname]["manual_wcs"] = None
                 continue
-
+            
             dict_aper[fname]["astrometric_candidates"] = reviewed_candidates
-
-            # run_manual_astrometry displays the selected stars, asks for
-            # their RA/Dec coordinates, fits the WCS, and checks the fit.
+            
+            # Display the selected stars and prompt for their RA/Dec coordinates.
+            # The clean image is fine for display, provided its shape matches
+            # the image used for candidate selection.
             wcs_solution = run_manual_astrometry(
                 image_data=clean_image_data,
                 candidates=reviewed_candidates,
                 title=fname,
+                min_stars=3,
             )
-
+            
             dict_aper[fname]["manual_wcs"] = wcs_solution
-
+            
             if wcs_solution is not None:
                 dict_aper[fname]["astrometry_method_used"] = "manual"
                 print(f"{fname}: manual WCS created successfully.")
             else:
                 print(f"{fname}: manual astrometry failed or was cancelled.")
-
-
     # =========================================================
     # SOURCE COUNT
     # =========================================================
