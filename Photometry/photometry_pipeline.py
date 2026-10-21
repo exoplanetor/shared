@@ -670,11 +670,11 @@ def main():
                 continue
 
 
-                reviewed_candidates = review_astrometric_candidates(
-                    found_stars=dict_aper[fname]["sources found"],
-                    image_data=dict_images[fname]["clean_data"],
-                    fwhm=dict_aper[fname]["fwhm"]
-                )
+            reviewed_candidates = review_astrometric_candidates(
+                found_stars=dict_aper[fname]["sources found"],
+                image_data=dict_images[fname]["clean_data"],
+                fwhm=dict_aper[fname]["fwhm"]
+            )
 
 
             if (
