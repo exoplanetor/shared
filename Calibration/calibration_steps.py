@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------#
-# Developed by Leila Sadeghi Ardestani. Last updated 10/18/2026  #
+# Developed by Leila Sadeghi Ardestani. Last updated 10/21/2026  #
 # In case of Inquiries please contact the following email        #
 # email address :lsadeghi@ipm.ir                                 #
 # github = https://github.com/exoplanetor                        #
@@ -1243,104 +1243,172 @@ def run_calibration_pipeline(main_path, selected_mode="1", use_bias=True):
     # STEP 8 — APPLY TO ALL FRAMES
     # =========================================================
     for frame in light_frames:
-    
+
         raw = CCDData.read(frame, unit=u.adu)
-    
-        mask_hdu = fits.open(frame)['MASK'].data
-        raw.mask = mask_hdu.astype(bool)
-    
+
+        # =====================================================
+        # OPTIONAL HOT-PIXEL MASK
+        # Works whether the FITS file contains a MASK extension
+        # or has no mask at all.
+        # =====================================================
+        with fits.open(frame) as hdul:
+
+            if "MASK" in hdul:
+                mask_data = hdul["MASK"].data
+
+                if mask_data is None:
+                    raise ValueError(
+                        f"MASK extension is empty in {frame}"
+                    )
+
+                if mask_data.shape != raw.data.shape:
+                    raise ValueError(
+                        f"MASK shape {mask_data.shape} does not "
+                        f"match image shape {raw.data.shape} "
+                        f"in {frame}"
+                    )
+
+                raw.mask = np.asarray(mask_data, dtype=bool)
+
+                print(
+                    f"Hot-pixel mask loaded: "
+                    f"{Path(frame).name}"
+                )
+
+            else:
+                # No MASK extension: continue without hot-pixel masking
+                raw.mask = None
+
+                print(
+                    f"WARNING: No MASK extension in "
+                    f"{Path(frame).name}. "
+                    f"Continuing without hot-pixel masking."
+                )
+
+        # =====================================================
+        # CONTINUE WITH THE EXISTING CALIBRATION
+        # =====================================================
         filt = raw.header.get("FILTER")
-    
+
         if filt is None:
-            raise ValueError(f"No FILTER keyword in {frame}")
-    
+            raise ValueError(
+                f"No FILTER keyword in {frame}"
+            )
+
         if filt not in combined_flats:
             raise ValueError(
                 f"No dark-corrected flat for FILTER={filt}"
             )
-    
+
         if filt not in combined_flats_raw:
             raise ValueError(
                 f"No raw flat for FILTER={filt}"
             )
-    
-        exp = raw.header.get('EXPTIME') or raw.header.get('EXPOSURE')
-    
+
+        exp = (
+            raw.header.get("EXPTIME")
+            or raw.header.get("EXPOSURE")
+        )
+
         if exp is None:
-            raise ValueError(f"No exposure keyword in {frame}")
-    
+            raise ValueError(
+                f"No exposure keyword in {frame}"
+            )
+
         minus_dark = ccdp.subtract_dark(
             raw,
             master_dark,
-            dark_exposure=float(master_dark.header['EXPTIME']) * u.second,
+            dark_exposure=(
+                float(master_dark.header["EXPTIME"]) * u.second
+            ),
             data_exposure=float(exp) * u.second,
             exposure_unit=u.second
         )
-    
+
         # -----------------------------
-        # FLAT SELECTION (FILTER-SAFE)
+        # FLAT SELECTION
         # -----------------------------
         if selected_mode == "minus_dark_div_flat":
-    
+
             final = ccdp.flat_correct(
                 minus_dark,
                 combined_flats[filt]
             )
-    
-        elif selected_mode == "minus_dark_div_non-dark-reduced_flat":
-    
+
+        elif (
+            selected_mode
+            == "minus_dark_div_non-dark-reduced_flat"
+        ):
+
             final = ccdp.flat_correct(
                 minus_dark,
                 combined_flats_raw[filt]
             )
-    
+
         else:
-    
+
             final = ccdp.flat_correct(
                 raw,
                 combined_flats_raw[filt]
             )
-    
+
         data = final.data
-    
+
+        # -----------------------------
+        # OPTIONAL BACKGROUND SUBTRACTION
+        # -----------------------------
         if apply_bg:
-    
-            threshold = detect_threshold(data, nsigma=3)
-    
-            segment_img = detect_sources(data, threshold, npixels=10)
-    
-            mask = segment_img.make_source_mask() if segment_img else None
-    
+
+            threshold = detect_threshold(
+                data,
+                nsigma=3
+            )
+
+            segment_img = detect_sources(
+                data,
+                threshold,
+                npixels=10
+            )
+
+            mask = (
+                segment_img.make_source_mask()
+                if segment_img is not None
+                else None
+            )
+
             bkg = Background2D(
                 data,
                 (50, 50),
                 mask=mask,
                 bkg_estimator=MedianBackground()
             )
-    
+
             data = data - bkg.background
-    
+
+        # -----------------------------
+        # SAVE FINAL CALIBRATED FRAME
+        # -----------------------------
         final_ccd = CCDData(
             data,
             header=final.header,
             unit=final.unit
         )
-    
+
         suffix = "_bg" if apply_bg else ""
-    
+
         output_name = (
             f"{Path(frame).stem}_"
             f"{selected_mode}"
             f"{suffix}_final.fits"
         )
-    
+
         final_ccd.write(
             calibrated_path / output_name,
             overwrite=True
         )
-    
+
         print(f"Saved: {output_name}")
-    
+
     print("\nPipeline complete.\n")
-    
+
     return combined_flats, combined_flats_raw
