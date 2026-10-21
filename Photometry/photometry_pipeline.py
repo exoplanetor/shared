@@ -25,7 +25,7 @@ from steps_astrometry import (
     select_astrometric_candidates,
     solve_with_astrometry_net_raw_upload,
     review_astrometric_candidates,
-    run_manual_astrometry
+    run_manual_astrometry,
 )
 # =============================================================
 # USER SETTINGS
