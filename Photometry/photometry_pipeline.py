@@ -21,12 +21,7 @@ from steps_photometry import (
     PS1_SUPPORTED_FILTERS
 )
 
-from steps_astrometry import (
-    select_astrometric_candidates,
-    solve_with_astrometry_net_raw_upload,
-    review_astrometric_candidates,
-    run_manual_astrometry,
-)
+
 # =============================================================
 # USER SETTINGS
 # =============================================================
@@ -332,7 +327,7 @@ def get_astrometry_settings():
 # =============================================================
 
 def main():
-    reviewed_candidates = None
+
     # =========================================================
     # INPUT DIRECTORY
     # =========================================================
@@ -542,13 +537,15 @@ def main():
             select_astrometric_candidates,
             solve_with_astrometry_net_raw_upload,
             review_astrometric_candidates,
-            run_manual_astrometry,
+            create_manual_wcs
         )
 
         image_names = list(dict_images.keys())
 
         if len(image_names) == 0:
-            raise RuntimeError("No images available for astrometry.")
+            raise RuntimeError(
+                "No images available for astrometry."
+            )
 
         reference_fname = image_names[0]
 
@@ -556,110 +553,169 @@ def main():
         print("=================================================")
         print("ASTROMETRY / WCS CALIBRATION")
         print("=================================================")
+
         print(f"Reference image: {reference_fname}")
 
-        # Solve each image independently.
+        # -----------------------------------------------------
+        # SOLVE EACH IMAGE
+        # -----------------------------------------------------
+
         for fname in image_names:
 
-            found_stars = dict_aper[fname].get("sources found")
+            found_stars = dict_aper[fname].get(
+                "sources found"
+            )
+
             image_data = dict_images[fname]["data"].astype(float)
-            clean_image_data = dict_images[fname].get("clean_data", image_data)
+
             fwhm = dict_aper[fname].get("fwhm")
 
             if found_stars is None or len(found_stars) == 0:
-                print(f"{fname}: no sources available for astrometry.")
+
+                print(
+                    f"{fname}: no sources available for astrometry."
+                )
+
                 dict_aper[fname]["astrometric_candidates"] = None
                 dict_aper[fname]["manual_wcs"] = None
+
                 continue
 
             if fwhm is None:
-                print(f"{fname}: no FWHM available; skipping astrometry.")
+
+                print(
+                    f"{fname}: no FWHM available; "
+                    "skipping astrometry."
+                )
+
                 dict_aper[fname]["astrometric_candidates"] = None
                 dict_aper[fname]["manual_wcs"] = None
+
                 continue
 
-            # Check that this image has enough plausible candidates before
-            # attempting either automatic or manual astrometry.
+            # -------------------------------------------------
+            # SELECT ASTROMETRIC CANDIDATES
+            # -------------------------------------------------
+
             candidates = select_astrometric_candidates(
                 found_stars,
                 image_data.shape,
-                fwhm,
+                fwhm
             )
+
             dict_aper[fname]["astrometric_candidates"] = candidates
 
             if candidates is None or len(candidates) == 0:
-                print(f"{fname}: no suitable astrometric candidates.")
+
+                print(
+                    f"{fname}: no suitable astrometric candidates."
+                )
+
                 dict_aper[fname]["manual_wcs"] = None
+
                 continue
 
-            method = astrometry_settings.get("method")
+            # =================================================
+            # METHOD 1: AUTOMATIC IMAGE UPLOAD
+            # =================================================
+
             wcs_solution = None
 
-            # First try astrometry.net if requested. If it fails, fall back
-            # to the manual workflow below.
-            if method == "astrometry_net":
-                print(f"{fname}: trying automatic image-upload astrometry...")
+            if astrometry_settings["method"] == "astrometry_net":
+
+                print(
+                    f"{fname}: trying automatic image-upload astrometry..."
+                )
 
                 wcs_solution = solve_with_astrometry_net_raw_upload(
                     image_path=dict_images[fname]["path"],
                     api_key=astrometry_settings["api_key"],
                     scale_lower_arcmin=SCALE_LOWER_ARCMIN,
-                    scale_upper_arcmin=SCALE_UPPER_ARCMIN,
+                    scale_upper_arcmin=SCALE_UPPER_ARCMIN
                 )
 
                 if wcs_solution is not None:
+
                     dict_aper[fname]["manual_wcs"] = wcs_solution
-                    dict_aper[fname]["astrometry_method_used"] = "image_upload"
-                    print(f"{fname}: automatic image-upload astrometry succeeded.")
+
+                    dict_aper[fname][
+                        "astrometry_method_used"
+                    ] = "image_upload"
+
+                    print(
+                        f"{fname}: automatic image-upload "
+                        "astrometry succeeded."
+                    )
+
                     continue
 
-                print(f"{fname}: automatic astrometry failed; trying manual astrometry...")
+                print(
+                    f"{fname}: automatic astrometry failed; "
+                    "trying manual astrometry..."
+                )
 
-            elif method != "manual":
-                print(f"{fname}: unsupported astrometry method: {method}")
+            # =================================================
+            # METHOD 2: MANUAL ASTROMETRY
+            # =================================================
+
+            elif astrometry_settings["method"] != "manual":
+
+                print(
+                    f"{fname}: unsupported astrometry method: "
+                    f"{astrometry_settings['method']}"
+                )
+
                 dict_aper[fname]["manual_wcs"] = None
+
                 continue
 
-            # Manual astrometry is used when the user selected it, or when
-            # the automatic astrometry.net solve failed. Review the candidates
-            # here (not inside the unsupported-method branch).
-            # Use the same image array used for the initial candidate
-            # selection, so the candidate coordinates are checked against
-            # the correct image dimensions.
-            reviewed_candidates = review_astrometric_candidates(
-                found_stars=found_stars,
-                image_data=image_data,
-                fwhm=fwhm,
-            )
-            
-            if reviewed_candidates is None or len(reviewed_candidates) == 0:
+
+                reviewed_candidates = review_astrometric_candidates(
+                    found_stars=dict_aper[fname]["sources found"],
+                    image_data=dict_images[fname]["clean_data"],
+                    fwhm=dict_aper[fname]["fwhm"]
+                )
+
+
+            if (
+                reviewed_candidates is None
+                or len(reviewed_candidates) == 0
+            ):
+
                 print(
                     f"{fname}: no reviewed candidates available "
                     "for manual WCS."
                 )
-                dict_aper[fname]["astrometric_candidates"] = None
+
                 dict_aper[fname]["manual_wcs"] = None
+
                 continue
-            
-            dict_aper[fname]["astrometric_candidates"] = reviewed_candidates
-            
-            # Display the selected stars and prompt for their RA/Dec coordinates.
-            # The clean image is fine for display, provided its shape matches
-            # the image used for candidate selection.
-            wcs_solution = run_manual_astrometry(
-                image_data=clean_image_data,
-                candidates=reviewed_candidates,
-                title=fname,
-                min_stars=3,
+
+            wcs_solution = create_manual_wcs(
+                fname,
+                dict_images[fname],
+                reviewed_candidates
             )
-            
+
             dict_aper[fname]["manual_wcs"] = wcs_solution
-            
+
             if wcs_solution is not None:
-                dict_aper[fname]["astrometry_method_used"] = "manual"
-                print(f"{fname}: manual WCS created successfully.")
+
+                dict_aper[fname][
+                    "astrometry_method_used"
+                ] = "manual"
+
+                print(
+                    f"{fname}: manual WCS created successfully."
+                )
+
             else:
-                print(f"{fname}: manual astrometry failed or was cancelled.")
+
+                print(
+                    f"{fname}: manual astrometry failed."
+                )
+
+
     # =========================================================
     # SOURCE COUNT
     # =========================================================
