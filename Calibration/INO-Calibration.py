@@ -62,12 +62,12 @@ def main():
         print("HOT PIXEL MASK REQUIREMENTS")
         print("-------------------------------------------")
         print("Before continuing, make sure that:")
-        print("1. You have exactly TWO dark frames prepared.")
+        print("1. You have only TWO Master Dark frames in the mask directory each made up of about 50 dark frames.")
         print("2. Both dark frames have OBSTYPE = DARK in their FITS headers.")
         print("3. The dark frames are located inside the 'mask' folder:")
         print(f"   {folder}\\mask")
         print("4. The two dark frames should have different exposure times")
-        print("   (one short exposure and one long exposure).")
+        print("   (one short exposure and one almost 10 times longer exposure).")
         print("-------------------------------------------\n")
     
         if ask_yes_no("Are these requirements satisfied?"):
