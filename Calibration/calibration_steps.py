@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------#
-# Developed by Leila Sadeghi Ardestani. Last updated 10/21/2026  #
+# Developed by Leila Sadeghi Ardestani. Last updated 10/23/2026  #
 # In case of Inquiries please contact the following email        #
 # email address :lsadeghi@ipm.ir                                 #
 # github = https://github.com/exoplanetor                        #
@@ -415,19 +415,12 @@ import astropy.units as u
 
 # Apply hot pixel mask to all files in main_path
 # -----------------------------
+
+
 def apply_hot_pixel_mask(main_path):
-
     main_path = Path(main_path)
-
-    # =========================================================
-    # 0. CREATE RAW FOLDER
-    # =========================================================
     raw_folder = main_path / "raw"
     raw_folder.mkdir(exist_ok=True)
-
-    # =========================================================
-    # 1. AUTO-FIND MASK
-    # =========================================================
     mask_path = main_path / "mask"
     
     mask_files = [
@@ -436,77 +429,39 @@ def apply_hot_pixel_mask(main_path):
         and "mask" in f.name.lower()
     ]
 
-    if len(mask_files) == 0:
+    if not mask_files:
         print("\n⚠ No hot pixel mask found in mask folder.")
-        print("\nTo create one, run:")
-        print("build_hot_pixel_mask(main_path)")
-
-        create = input("\nDo you want to create a mask now? (y/n): ").strip().lower()
-
-        if create != "y":
-            print("Skipping masking step.")
-            return
-
-        print("\nPlease create the mask first, then re-run this function.")
         return
 
     mask_file = sorted(mask_files)[-1]
-    print("\nUsing mask:", mask_file.name)
-
-    # =========================================================
-    # 2. LOAD MASK
-    # =========================================================
     mask_data = fits.getdata(mask_file)
     bad_hot_pixels = mask_data.astype(bool)
 
-    print(f"Mask loaded with {bad_hot_pixels.sum()} hot pixels")
+    # ONLY target science object frames (ignore bias, dark, flat)
+    all_files = []
+    for f in main_path.glob("*"):
+        if f.suffix.lower() not in [".fit", ".fits"] or "mask" in f.name.lower() or "_masked" in f.name.lower():
+            continue
+        try:
+            hdr = fits.getheader(f)
+            if hdr.get("OBSTYPE", "").strip().upper() == "OBJECT":
+                all_files.append(f)
+        except Exception:
+            pass
 
-    # =========================================================
-    # 3. FIND SCIENCE FILES
-    # =========================================================
-    all_files = [
-        f for f in main_path.glob("*")
-        if f.suffix.lower() in [".fit", ".fits"]
-        and "mask" not in f.name.lower()
-        and "_masked" not in f.name.lower()
-    ]
+    print(f"\nApplying mask to {len(all_files)} science files...")
 
-    print(f"\nApplying mask to {len(all_files)} files...")
-
-    # =========================================================
-    # 4. APPLY MASK (FIXED)
-    # =========================================================
     for file in all_files:
-
         print("Processing:", file.name)
-
         data = fits.getdata(file).astype(float)
         header = fits.getheader(file)
 
-        ccdf = CCDData(data, unit=u.adu, meta=header)
-
-        # IMPORTANT: do NOT modify data
-        ccdf.mask = bad_hot_pixels
-
-        # Save image + mask as separate HDUs
-        primary_hdu = fits.PrimaryHDU(data=ccdf.data, header=ccdf.meta)
-
-        mask_hdu = fits.ImageHDU(
-            data=bad_hot_pixels.astype(int),
-            name="MASK"
-        )
-
-        hdulist = fits.HDUList([primary_hdu, mask_hdu])
+        primary_hdu = fits.PrimaryHDU(data=data, header=header)
+        mask_hdu = fits.ImageHDU(data=bad_hot_pixels.astype(int), name="MASK")
+        hdulist = fits.HDUList([primary_hstack := primary_hdu, mask_hdu]) # or HDUList([primary_hdu, mask_hdu])
 
         out_file = file.with_name(file.stem + "_masked.fits")
-
         hdulist.writeto(out_file, overwrite=True)
-
-        print(f"Saved → {out_file.name}")
-
-        # =====================================================
-        # MOVE ORIGINAL TO RAW FOLDER
-        # =====================================================
         shutil.move(str(file), str(raw_folder / file.name))
 
         print(f"Moved original → raw/{file.name}")
@@ -1412,3 +1367,4 @@ def run_calibration_pipeline(main_path, selected_mode="1", use_bias=True):
     print("\nPipeline complete.\n")
 
     return combined_flats, combined_flats_raw
+
