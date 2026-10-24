@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------#
-# Developed by Leila Sadeghi Ardestani. Last updated 10/18/2026  #
+# Developed by Leila Sadeghi Ardestani. Last updated 10/24/2026  #
 # In case of Inquiries please contact the following email        #
 # email address :lsadeghi@ipm.ir                                 #
 # github = https://github.com/exoplanetor                        #
@@ -22,6 +22,16 @@ from calibration_steps import (
     plot_pipeline_qc
 )
 from pathlib import Path
+import warnings
+import logging
+from astropy.utils.exceptions import AstropyDeprecationWarning, AstropyUserWarning
+
+# Suppress common Astropy and runtime warnings to keep terminal output clean
+warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
+warnings.simplefilter('ignore', category=AstropyUserWarning)
+warnings.simplefilter('ignore', category=RuntimeWarning)
+logging.getLogger('astropy').setLevel(logging.ERROR)
+logging.getLogger('ccdproc').setLevel(logging.ERROR)
 
 def ask_yes_no(question):
     while True:
