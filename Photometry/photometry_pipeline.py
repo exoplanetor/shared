@@ -1,5 +1,7 @@
 import os
 import numpy as np
+import warnings
+from astropy.utils.exceptions import AstropyDeprecationWarning, AstropyUserWarning
 
 from config import (
     ASTROMETRY_API_KEY,
@@ -21,6 +23,13 @@ from steps_photometry import (
     PS1_SUPPORTED_FILTERS
 )
 
+from steps_astrometry import run_manual_astrometry
+
+
+# Suppress common Astropy and runtime warnings to keep terminal output clean
+warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
+warnings.simplefilter('ignore', category=AstropyUserWarning)
+warnings.simplefilter('ignore', category=RuntimeWarning)
 
 # =============================================================
 # USER SETTINGS
@@ -283,45 +292,6 @@ def get_astrometry_choice():
     return choice != "n"
 
 
-def get_astrometry_settings():
-    """
-    Ask the user which astrometry method to use.
-    Defaults to astrometry.net automatic when Enter is pressed.
-    """
-
-    print()
-    print("Astrometry method")
-    print("-----------------")
-    print("1) astrometry.net automatic")
-    print("2) manual")
-
-    choice = input(
-        "Choose method (1/2, default 1): "
-    ).strip() or "1"
-
-    if choice == "1":
-        api_key = ASTROMETRY_API_KEY
-
-        if not api_key:
-            raise RuntimeError(
-                "ASTROMETRY_API_KEY is not configured."
-            )
-
-        return {
-            "method": "astrometry_net",
-            "api_key": api_key
-        }
-
-    elif choice == "2":
-        return {
-            "method": "manual"
-        }
-
-    else:
-        raise ValueError(
-            "Invalid choice. Please enter 1 or 2."
-        )
-
 # =============================================================
 # MAIN
 # =============================================================
@@ -524,8 +494,14 @@ def main():
     astrometry_settings = None
 
     if perform_astrometry:
-        astrometry_settings = get_astrometry_settings()
-
+        if not ASTROMETRY_API_KEY:
+            raise RuntimeError("ASTROMETRY_API_KEY is not configured.")
+        
+        # Always try automatic first; code will automatically fall back to manual if it fails
+        astrometry_settings = {
+            "method": "astrometry_net",
+            "api_key": ASTROMETRY_API_KEY
+        }
 
     # =========================================================
     # ASTROMETRY
@@ -537,7 +513,8 @@ def main():
             select_astrometric_candidates,
             solve_with_astrometry_net_raw_upload,
             review_astrometric_candidates,
-            create_manual_wcs
+            create_manual_wcs,
+            run_manual_astrometry
         )
 
         image_names = list(dict_images.keys())
@@ -691,10 +668,10 @@ def main():
 
                 continue
 
-            wcs_solution = create_manual_wcs(
-                fname,
-                dict_images[fname],
-                reviewed_candidates
+            wcs_solution = run_manual_astrometry(
+                image_data=dict_images[fname]["clean_data"],
+                candidates=reviewed_candidates,
+                title=f"Manual astrometry: {fname}"
             )
 
             dict_aper[fname]["manual_wcs"] = wcs_solution
