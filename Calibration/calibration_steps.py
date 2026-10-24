@@ -72,176 +72,219 @@ def fix_headers(main_path):
 # Inspect all science images in the directory
 # -----------------------------
 
-import os
-import glob
-import gc
-import numpy as np
-import matplotlib.pyplot as plt
-import tkinter as tk
-from astropy.io import fits
-from astropy.visualization import simple_norm
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
+def preview_frames(
+    images_dir,
+    ask_yes_no,
+    frames_per_page=8,
+    cols=4,
+    downsample=4,
+):
+    """Fast, paginated FITS preview for initial visual inspection."""
 
-def show_scrollable_figure(fig, title="FITS Preview"):
+    import os
+    import re
+    import gc
+    from pathlib import Path
 
-    root = tk.Tk()
-    root.title(title)
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from astropy.io import fits
 
-    canvas = tk.Canvas(root)
-    vbar = tk.Scrollbar(root, orient="vertical", command=canvas.yview)
-    hbar = tk.Scrollbar(root, orient="horizontal", command=canvas.xview)
-
-    canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
-
-    vbar.pack(side="right", fill="y")
-    hbar.pack(side="bottom", fill="x")
-    canvas.pack(side="left", fill="both", expand=True)
-
-    frame = tk.Frame(canvas)
-    canvas.create_window((0, 0), window=frame, anchor="nw")
-
-    mpl = FigureCanvasTkAgg(fig, master=frame)
-    mpl.draw()
-    mpl.get_tk_widget().pack()
-
-    frame.update_idletasks()
-    canvas.configure(scrollregion=canvas.bbox("all"))
-
-    def close():
-        plt.close(fig)
-        root.destroy()
-
-    root.protocol("WM_DELETE_WINDOW", close)
-    root.mainloop()
-
-    plt.close(fig)
-
-
-def show_scrollable_figure(fig, title="FITS Preview"):
-
-    root = tk.Tk()
-    root.title(title)
-
-    canvas = tk.Canvas(root)
-    vbar = tk.Scrollbar(root, orient="vertical", command=canvas.yview)
-    hbar = tk.Scrollbar(root, orient="horizontal", command=canvas.xview)
-
-    canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
-
-    vbar.pack(side="right", fill="y")
-    hbar.pack(side="bottom", fill="x")
-    canvas.pack(side="left", fill="both", expand=True)
-
-    frame = tk.Frame(canvas)
-    canvas.create_window((0, 0), window=frame, anchor="nw")
-
-    mpl = FigureCanvasTkAgg(fig, master=frame)
-    mpl.draw()
-    mpl.get_tk_widget().pack()
-
-    frame.update_idletasks()
-    canvas.configure(scrollregion=canvas.bbox("all"))
-
-    def close():
-        plt.close(fig)
-        root.destroy()
-
-    root.protocol("WM_DELETE_WINDOW", close)
-    root.mainloop()
-
-    plt.close(fig)
-
-
-def preview_frames(images_dir, ask_yes_no):
-
-    images = sorted(
-        str(f)
-        for f in Path(images_dir).rglob("*")
-        if f.suffix.lower() in [".fit", ".fits"]
+    image_files = sorted(
+        p for p in Path(images_dir).rglob("*")
+        if p.suffix.lower() in (".fit", ".fits", ".fts")
     )
 
-    if len(images) == 0:
-        print("No FITS files found")
+    if not image_files:
+        print("No FITS files found.")
         return False
 
-    groups = {"BIAS": [], "DARK": [], "FLAT": [], "OBJECT": []}
+    groups = {
+        "BIAS": [],
+        "DARK": [],
+        "FLAT": [],
+        "OBJECT": [],
+    }
 
-    for f in images:
+    # Preserve the original OBSTYPE grouping behavior.
+    for filename in image_files:
         try:
-            with fits.open(f) as hdul:
-                t = hdul[0].header.get("OBSTYPE", "").strip().upper()
-                if t in groups:
-                    groups[t].append(f)
-        except:
-            pass
+            with fits.open(
+                filename,
+                mode="readonly",
+                memmap=False,
+            ) as hdul:
+                obstype = str(
+                    hdul[0].header.get("OBSTYPE", "")
+                ).strip().upper()
+
+            if obstype in groups:
+                groups[obstype].append(filename)
+
+        except Exception as exc:
+            print(f"Could not read header {filename.name}: {exc}")
+
+    frames_per_page = max(1, int(frames_per_page))
+    cols = max(1, min(int(cols), frames_per_page))
+    step = max(1, int(downsample))
 
     for obstype, files in groups.items():
-
         if not files:
             continue
 
-        if not ask_yes_no(f"Inspect {obstype}?"):
+        if not ask_yes_no(f"Inspect {obstype} frames?"):
             continue
 
-        cols = 3
-        rows = (len(files) + cols - 1) // cols
+        for start in range(0, len(files), frames_per_page):
+            page = files[start:start + frames_per_page]
+            rows = (len(page) + cols - 1) // cols
 
-        fig = plt.figure(figsize=(18, 6 * rows))
-        fig.suptitle(obstype)
-
-        plt.subplots_adjust(left=0.05, right=0.95, bottom=0.05, top=0.92,
-                            wspace=0.4, hspace=0.5)
-
-        for i, f in enumerate(files):
-
-            with fits.open(f) as hdul:
-                d = hdul[0].data
-                h = hdul[0].header
-                d = h.get("BSCALE", 1.0) * d + h.get("BZERO", 0.0)
-                d = np.nan_to_num(d)
-
-            ax = plt.subplot(rows, cols, i + 1)
-            
-            # --- Custom Filename & Exposure Formatting ---
-            name = os.path.basename(f)
-            
-            exp_str = ""
-            match = re.search(r'exp(\d{2})\.(\d{2})\.(\d{2})\.(\d{3})', name, re.IGNORECASE)
-            if match:
-                h_val, m_val, s_val, ms_val = map(int, match.groups())
-                total_seconds = h_val * 3600 + m_val * 60 + s_val + (ms_val / 1000.0)
-                if total_seconds.is_integer():
-                    exp_str = f"[{int(total_seconds)}sec]"
-                else:
-                    exp_str = f"[{total_seconds}sec]"
-
-            if len(name) > 27:
-                display_name = f"{name[:12]}... {exp_str} {name[-12:]}"
-            else:
-                display_name = f"{name} {exp_str}" if exp_str else name
-            # ---------------------------------------------
-
-            ax.set_title(display_name, fontsize=9)
-            ax.set_xticks([])
-            ax.set_yticks([])
-
-            norm = simple_norm(
-                d,
-                "sqrt",
-                percent=99,
-                vmin=np.percentile(d, 5),
-                vmax=np.percentile(d, 95),
+            fig, axes = plt.subplots(
+                rows,
+                cols,
+                figsize=(18, max(5, rows * 4)),
+                squeeze=False,
             )
 
-            ax.imshow(d, norm=norm, cmap="Greys")
+            fig.suptitle(
+                f"{obstype} frames — {start + 1}–"
+                f"{start + len(page)} of {len(files)}",
+                fontsize=12,
+            )
 
+            for ax, filename in zip(axes.ravel(), page):
+                try:
+                    # memmap=False is essential for FITS images with
+                    # BZERO/BSCALE/BLANK scaling keywords.
+                    with fits.open(
+                        filename,
+                        mode="readonly",
+                        memmap=False,
+                    ) as hdul:
+                        data = hdul[0].data
+
+                        if data is None or data.ndim != 2:
+                            raise ValueError(
+                                "Primary HDU does not contain a 2D image"
+                            )
+
+                        # Downsample only for preview; original data
+                        # remains unchanged on disk.
+                        preview = np.asarray(
+                            data[::step, ::step],
+                            dtype=np.float32,
+                        )
+
+                    # --- Original Filename & Exposure Formatting ---
+                    name = os.path.basename(str(filename))
+
+                    exp_str = ""
+                    match = re.search(
+                        r'exp(\d{2})\.(\d{2})\.(\d{2})\.(\d{3})',
+                        name,
+                        re.IGNORECASE,
+                    )
+
+                    if match:
+                        h_val, m_val, s_val, ms_val = map(
+                            int, match.groups()
+                        )
+                        total_seconds = (
+                            h_val * 3600
+                            + m_val * 60
+                            + s_val
+                            + ms_val / 1000.0
+                        )
+
+                        if total_seconds.is_integer():
+                            exp_str = f"[{int(total_seconds)}sec]"
+                        else:
+                            exp_str = f"[{total_seconds}sec]"
+
+                    if len(name) > 27:
+                        display_name = (
+                            f"{name[:12]}... {exp_str} {name[-12:]}"
+                        )
+                    else:
+                        display_name = (
+                            f"{name} {exp_str}" if exp_str else name
+                        )
+                    # -----------------------------------------------
+
+                    ax.set_title(display_name, fontsize=8, pad=4)
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+
+                    finite = preview[np.isfinite(preview)]
+
+                    if finite.size == 0:
+                        ax.text(
+                            0.5, 0.5,
+                            "No valid pixels",
+                            ha="center",
+                            va="center",
+                            transform=ax.transAxes,
+                        )
+                    else:
+                        # Estimate contrast from the reduced image.
+                        vmin, vmax = np.percentile(finite, [5, 95])
+
+                        if vmin >= vmax:
+                            vmin = float(finite.min())
+                            vmax = float(finite.max())
+
+                        if vmin >= vmax:
+                            vmax = vmin + 1.0
+
+                        ax.imshow(
+                            preview,
+                            cmap="Greys",
+                            origin="lower",
+                            vmin=vmin,
+                            vmax=vmax,
+                            interpolation="nearest",
+                            aspect="equal",
+                        )
+
+                    del preview
+
+                except Exception as exc:
+                    print(f"Could not display {filename.name}: {exc}")
+                    ax.set_title(filename.name[:35], fontsize=8, pad=4)
+                    ax.text(
+                        0.5, 0.5,
+                        f"Preview failed:\n{exc}",
+                        ha="center",
+                        va="center",
+                        wrap=True,
+                        transform=ax.transAxes,
+                    )
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+
+            # Hide unused cells on the last page.
+            for ax in axes.ravel()[len(page):]:
+                ax.set_visible(False)
+
+            # Fixed spacing avoids tight_layout warnings.
+            fig.subplots_adjust(
+                left=0.025,
+                right=0.985,
+                bottom=0.04,
+                top=0.87,
+                wspace=0.12,
+                hspace=0.30,
+            )
+
+            plt.show()
+            plt.close(fig)
             gc.collect()
-
-        show_scrollable_figure(fig, obstype)
 
     print("Done frame inspection")
     return True
+
+
 # -----------------------------
 # Hot pixel mask builder
 # -----------------------------
