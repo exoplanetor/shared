@@ -1252,6 +1252,19 @@ def build_photometry_table(
             )
 
             continue
+        h, w = data.shape
+        edge_margin = 25.0  # Safe margin covering aperture + annulus radius
+        good_edge = (
+            (sources["xcentroid"] > edge_margin) &
+            (sources["xcentroid"] < w - edge_margin) &
+            (sources["ycentroid"] > edge_margin) &
+            (sources["ycentroid"] < h - edge_margin)
+        )
+        sources = sources[good_edge]
+
+        if len(sources) == 0:
+            print(f"[WARNING] No sources left after edge filtering for {filename}")
+            continue
 
         # ----------------------------------------------------
         # APERTURE RADIUS
@@ -1417,6 +1430,9 @@ def build_photometry_table(
                 )
             )
         )
+
+        valid_mask = np.isfinite(table_phot["inst_mag"])
+        table_phot = table_phot[valid_mask]
 
         # ----------------------------------------------------
         # STORE
