@@ -1,3 +1,10 @@
+# ---------------------------------------------------------------#
+# Developed by Leila Sadeghi Ardestani. Last updated 10/24/2026  #
+# In case of Inquiries please contact the following email        #
+# email address :lsadeghi@ipm.ir                                 #
+# github = https://github.com/exoplanetor                        #
+# -------------------------------------------------------------- #
+
 """
 Zero-point calibration using Pan-STARRS DR2 as external truth.
 
