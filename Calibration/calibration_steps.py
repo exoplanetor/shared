@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------#
-# Developed by Leila Sadeghi Ardestani. Last updated 10/23/2026  #
+# Developed by Leila Sadeghi Ardestani. Last updated 10/24/2026  #
 # In case of Inquiries please contact the following email        #
 # email address :lsadeghi@ipm.ir                                 #
 # github = https://github.com/exoplanetor                        #
@@ -682,7 +682,23 @@ def make_master_flat_dark_corrected(combined_path):
     
 def make_master_flat_raw(path, combined_path):
 
-    files = glob.glob(str(path / 'flat*'))
+    files = []
+
+    for f in path.iterdir():
+        if not f.is_file() or f.suffix.lower() not in (".fit", ".fits"):
+            continue
+
+        try:
+            with fits.open(f) as hdul:
+                obstype = str(
+                    hdul[0].header.get("OBSTYPE", "")
+                    ).strip().upper()
+
+                if obstype == "FLAT":
+                    files.append(str(f))
+
+        except Exception as e:
+            print(f"Skipping unreadable FITS file {f.name}: {e}")
 
     if not files:
         raise RuntimeError("No raw flat frames found")
