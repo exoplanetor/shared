@@ -344,7 +344,7 @@ def run_manual_astrometry(image_data, candidates, title="Reference image",
         offer to redo the entry (likely indicates a typo in one star's
         coordinates) rather than silently accepting a bad WCS.
     """
-    show_astrometric_candidates(image_data, candidates, title=title)
+   # show_astrometric_candidates(image_data, candidates, title=title)
     print("\nReference image selected for manual astrometry.")
 
     while True:
