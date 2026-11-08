@@ -68,6 +68,7 @@ Python packages needed:
 - `astroquery`
 - `matplotlib`
 - `requests`
+- `tqdm`
 
 Install with pip if any are missing:
 
